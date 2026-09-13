@@ -1,0 +1,8 @@
+[mcp_servers.team-context]
+command = "pnpm"
+args = ["team-context", "mcp"]
+cwd = "."
+env_vars = ["TEAM_CONTEXT_URL", "TEAM_CONTEXT_TOKEN"]
+required = false
+enabled_tools = ["search_team_knowledge", "list_team_skills", "get_team_skill"]
+default_tools_approval_mode = "auto"

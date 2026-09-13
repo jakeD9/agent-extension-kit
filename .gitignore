@@ -1,1 +1,6 @@
 .roadmap
+node_modules/
+dist/
+.env
+coverage/
+*.tsbuildinfo

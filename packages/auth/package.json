@@ -1,0 +1,9 @@
+{
+  "name": "@agent-extension-kit/auth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "check": "tsc --noEmit", "build": "tsc" },
+  "dependencies": { "@agent-extension-kit/contracts": "workspace:*" }
+}

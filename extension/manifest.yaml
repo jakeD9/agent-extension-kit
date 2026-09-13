@@ -1,0 +1,14 @@
+schemaVersion: "1"
+id: agent-extension-kit-sample
+displayName: Agent Extension Kit Sample
+kitCompatibility: ">=0.1.0"
+repository: agent-extension-kit-sample
+projects:
+  - id: event-ingestion
+    accessGroups: [engineering]
+knowledge:
+  roots: [knowledge]
+skills:
+  root: skills
+defaultAuthorization:
+  denyByDefault: true

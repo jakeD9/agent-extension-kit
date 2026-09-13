@@ -1,0 +1,17 @@
+{
+  "name": "@agent-extension-kit/team-context-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "team-context": "./src/main.ts" },
+  "scripts": { "start": "tsx src/main.ts", "check": "tsc --noEmit", "build": "tsc" },
+  "dependencies": {
+    "@agent-extension-kit/contracts": "workspace:*",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@agent-extension-kit/auth": "workspace:*",
+    "@agent-extension-kit/context-service": "workspace:*"
+  }
+}

@@ -1,0 +1,36 @@
+services:
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - team-context-data:/data/db
+
+  team-context:
+    build:
+      context: .
+      target: team-context
+    environment:
+      HTTP_PORT: 3000
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DATABASE: agent_extension_kit
+      CONTENT_PATH: /app/extension
+      CONTENT_REVISION: ${CONTENT_REVISION:-local-example}
+      DEV_AUTH_PRINCIPALS: '${DEV_AUTH_PRINCIPALS:-{"dev-token":{"id":"local-developer","groups":["engineering"],"projects":["event-ingestion"],"roles":["approver"]}}}'
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  team-context-data:

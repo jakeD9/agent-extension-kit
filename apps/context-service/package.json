@@ -1,0 +1,23 @@
+{
+  "name": "@agent-extension-kit/context-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "check": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@agent-extension-kit/auth": "workspace:*",
+    "@agent-extension-kit/context-core": "workspace:*",
+    "@agent-extension-kit/contracts": "workspace:*",
+    "@agent-extension-kit/database": "workspace:*",
+    "fastify": "^5.6.0",
+    "gray-matter": "^4.0.3",
+    "pino": "^9.9.0",
+    "yaml": "^2.8.0",
+    "zod": "^4.1.0"
+  }
+}

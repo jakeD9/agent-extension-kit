@@ -1,0 +1,14 @@
+{
+  "name": "@agent-extension-kit/context-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "check": "tsc --noEmit", "build": "tsc" },
+  "dependencies": {
+    "@agent-extension-kit/contracts": "workspace:*",
+    "gray-matter": "^4.0.3",
+    "yaml": "^2.8.0",
+    "zod": "^4.1.0"
+  }
+}
