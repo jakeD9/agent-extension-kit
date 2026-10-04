@@ -7,11 +7,12 @@ that context globally available or embedding authorization in prompts. Genkit Py
 hosted orchestration runtime, initially through an explicit OpenAI model configuration; local Codex
 and Claude integrations remain independent of Genkit.
 
-Migration proceeds as verified vertical slices. The current implementation is S04: a Python context
+Migration proceeds as verified vertical slices. The current implementation includes a Python context
 service that validates a Git-owned extension pack, synchronizes only its knowledge index at a pinned
 revision into MongoDB, builds its skill catalog in memory, and provides authenticated cited search
-plus authorized skill list/get, immutable resolution, and exact package-download operations. The pull
-CLI/MCP, Genkit, coding jobs, Slack, and automation are not yet implemented.
+plus authorized skill list/get, immutable resolution, and exact package-download operations. A shared
+Python client/installer and `team-agent skills list/pull` CLI provide verified generic skill
+distribution. MCP, Genkit, coding jobs, Slack, and automation are not yet implemented.
 
 ## Runtime boundaries
 
@@ -56,17 +57,22 @@ response. Skill bodies retain repository/path/revision provenance. The loader re
 bounded self-contained packages, rejects symlinks and unsafe or missing explicit resources, hashes
 raw file bytes with bounded streaming reads, and derives provenance-bound content IDs. Resolution
 authorizes names before revision errors and serves only the current catalog without substituting
-another revision. Jobs later stage verified packages during bootstrap for their lifetime; an old
-frozen lock requires a verified cache or fails. Lockfiles and atomic installation follow in later
-distribution slices; none of these interfaces are Genkit built-ins. Python JSON contracts use
+another revision. The installer stages and verifies complete packages before an atomic per-package
+replacement, writes a credential-free versioned lock plus a separate ownership manifest, and
+preserves unmanaged and unselected content. Ownership records every installed path and hash, so a
+replacement refuses edited or unexpected files. A recoverable journal retains package and metadata
+backups through commit and rolls an interrupted pull back before the next pull proceeds. Frozen pulls
+never resolve latest: an old lock requires the exact current-service package or a verified local
+cache and otherwise fails. None of these interfaces are Genkit built-ins. Python JSON contracts use
 snake_case.
 
 REST is the primary context interface. MCP and CLI will adapt the same application services and
 policy decisions. Genkit-specific types stay inside `runtime_genkit`.
 
 Git-owned team skills remain provider neutral. The shared `SkillClient` resolves an authorized subset
-to an immutable lock and installs a bounded projection before the runtime points Genkit Skills
-middleware at it. Coding runners use the same lock and installer with a harness target. The
+to an immutable lock and `SkillInstaller` installs a bounded generic projection. A later runtime will
+point Genkit Skills middleware at that projection, while coding runners will reuse the same lock and
+installer through harness-specific targets. The
 checked-in `developing-genkit-python` agent skill guides repository development only; it does not
 grant hosted runtime capabilities.
 

@@ -1,3 +1,4 @@
+import re
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -148,6 +149,30 @@ class SkillPackageResponse(SkillPackageBundle):
     request_id: str
 
 
+class SkillLockPackage(ImmutableSkillPackageManifest):
+    """Credential-free immutable package identity stored in a pull lock."""
+
+
+class SkillLock(ContractModel):
+    schema_version: Literal["1"] = "1"
+    catalog_revision: str = Field(min_length=1)
+    project: str = Field(min_length=1)
+    target: Literal["generic"] = "generic"
+    packages: list[SkillLockPackage] = Field(max_length=100)
+
+    @model_validator(mode="after")
+    def unique_packages(self) -> "SkillLock":
+        names = [package.name for package in self.packages]
+        package_ids = [package.package_id for package in self.packages]
+        if len(set(names)) != len(names) or len(set(package_ids)) != len(package_ids):
+            raise ValueError("Locked skill names and package IDs must be unique")
+        if any(not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) for name in names):
+            raise ValueError("Locked skill names must use kebab-case")
+        if any(package.source_revision != self.catalog_revision for package in self.packages):
+            raise ValueError("Locked packages must match the catalog revision")
+        return self
+
+
 class ErrorDetail(ContractModel):
     code: str
     message: str
@@ -175,6 +200,8 @@ __all__ = [
     "SkillGetResponse",
     "SkillListRequest",
     "SkillListResponse",
+    "SkillLock",
+    "SkillLockPackage",
     "SkillPackageBundle",
     "SkillPackageFile",
     "SkillPackageGetRequest",

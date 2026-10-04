@@ -5,11 +5,11 @@ governed memory, and narrowly scoped tools. Genkit Python will coordinate hosted
 initial OpenAI model path, while the extension kit remains usable by local Codex and Claude clients
 without Genkit or database credentials.
 
-The migration is intentionally incremental. The current S04 implementation provides authenticated,
+The migration is intentionally incremental. The current implementation provides authenticated,
 revision-pinned MongoDB knowledge search plus authorized skill discovery/loading from a pinned
-Git/filesystem catalog held in service memory, including immutable package resolution and exact
-package downloads. The pull CLI, MCP, Genkit orchestration, coding runners, Slack, and automations
-arrive in later roadmap slices.
+Git/filesystem catalog, immutable package downloads, and a shared verified pull client/installer.
+The MCP adapter, Genkit orchestration, coding runners, Slack, and automations arrive in later roadmap
+slices.
 
 ## Quick start
 
@@ -37,6 +37,28 @@ curl -s 'http://localhost:3000/v1/skills/diagnose-and-fix?project=event-ingestio
 knowledge revision has synchronized. Skill discovery is rebuilt directly from that pinned checkout.
 To run the process directly, start MongoDB first, load `.env`, and use
 `uv run team-context-service`.
+
+## Pulling skills
+
+The `team-agent` CLI reads its context-service URL and bearer token from the environment so secrets
+do not enter shell history or lockfiles:
+
+```sh
+export TEAM_AGENT_CONTEXT_URL=http://127.0.0.1:3000
+export TEAM_AGENT_TOKEN=dev-token
+
+uv run team-agent skills list --project event-ingestion
+uv run team-agent skills pull diagnose-and-fix \
+  --project event-ingestion --dest .team-agent/skills
+uv run team-agent skills pull --lock .team-agent/skills/skills.lock.json \
+  --dest /tmp/job-skills --frozen --non-interactive
+```
+
+`skills.lock.json` contains only immutable provenance and hashes. Pulls verify all paths, sizes, and
+hashes before replacing any managed package; preserve unmanaged files and unselected packages; and
+never execute downloaded scripts. `--json` provides machine-readable list, success, and error output.
+S05 supports the provider-neutral `generic` target only; Codex and Claude layouts are later slices.
+Lock pulls derive their project from the validated lock; an optional explicit `--project` must match.
 
 ## Repository guide
 

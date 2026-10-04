@@ -24,6 +24,7 @@ members = [
   "packages/context_core_py",
   "packages/contracts_py",
   "packages/database_py",
+  "packages/skills_py",
 ]
 
 [tool.pytest.ini_options]
@@ -32,6 +33,7 @@ testpaths = [
   "apps/context_service/tests",
   "packages/context_core_py/tests",
   "packages/database_py/tests",
+  "packages/skills_py/tests",
   "tests/integration",
 ]
 
@@ -51,4 +53,5 @@ packages = [
   "team_agent_database",
   "team_context_core",
   "team_context_service",
+  "team_agent_skills",
 ]

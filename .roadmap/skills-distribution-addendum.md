@@ -43,7 +43,8 @@ Exactly one selection mode is required: named skills, `--all`, or `--lock`. `--r
 optionally requires the exact currently approved Git revision; the service does not browse history.
 Without it, resolve the current catalog once per pull. `--all` means the full authorized catalog for
 the supplied scope, not every company skill. It does not automatically enable every downloaded skill
-for every agent.
+for every agent. Named and all pulls require `--project`. Lock pulls derive the project from the
+validated lock; an optional explicit `--project` must match it.
 
 `skills:resolve` accepts a selection and project scope and returns a manifest pinned to the currently
 approved catalog revision. Entries include skill name, package ID, source revision, file hashes,

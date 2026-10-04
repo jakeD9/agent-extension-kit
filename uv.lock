@@ -12,6 +12,7 @@ members = [
     "team-agent-auth",
     "team-agent-contracts",
     "team-agent-database",
+    "team-agent-skills",
     "team-context-core",
     "team-context-service",
 ]
@@ -660,6 +661,23 @@ requires-dist = [
     { name = "pymongo", specifier = ">=4.13,<5" },
     { name = "team-agent-contracts", editable = "packages/contracts_py" },
     { name = "team-context-core", editable = "packages/context_core_py" },
+]
+
+[[package]]
+name = "team-agent-skills"
+version = "0.2.0"
+source = { editable = "packages/skills_py" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "team-agent-contracts" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28.1,<0.29" },
+    { name = "pydantic", specifier = ">=2.12.0,<3" },
+    { name = "team-agent-contracts", editable = "packages/contracts_py" },
 ]
 
 [[package]]

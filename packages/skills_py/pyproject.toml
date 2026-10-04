@@ -1,0 +1,19 @@
+[project]
+name = "team-agent-skills"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+  "httpx>=0.28.1,<0.29",
+  "pydantic>=2.12.0,<3",
+  "team-agent-contracts",
+]
+
+[project.scripts]
+team-agent = "team_agent_skills.cli:main"
+
+[tool.uv.sources]
+team-agent-contracts = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"

@@ -11,6 +11,7 @@ COPY packages/auth_py ./packages/auth_py
 COPY packages/context_core_py ./packages/context_core_py
 COPY packages/contracts_py ./packages/contracts_py
 COPY packages/database_py ./packages/database_py
+COPY packages/skills_py ./packages/skills_py
 COPY extension ./extension
 
 RUN uv sync --locked --no-dev --all-packages
