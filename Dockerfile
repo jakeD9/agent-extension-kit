@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM ghcr.io/astral-sh/uv:0.11.7 AS uv
 
-FROM python:3.12-slim AS python-workspace
+FROM python:3.12.2-slim AS python-workspace
 COPY --from=uv /uv /uvx /bin/
 WORKDIR /app
 
@@ -13,6 +13,7 @@ COPY packages/context_core_py ./packages/context_core_py
 COPY packages/contracts_py ./packages/contracts_py
 COPY packages/database_py ./packages/database_py
 COPY packages/skills_py ./packages/skills_py
+COPY packages/runtime_genkit_py ./packages/runtime_genkit_py
 COPY extension ./extension
 
 RUN uv sync --locked --no-dev --all-packages

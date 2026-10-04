@@ -1,0 +1,27 @@
+[project]
+name = "team-agent-runtime-genkit"
+version = "0.2.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.142.2",
+  "genkit==0.12.0",
+  "genkit-fastapi==0.12.0",
+  "genkit-middleware==0.12.0",
+  "genkit-openai==0.12.0",
+  "httpx==0.28.1",
+  "openai==3.24.0",
+  "pydantic==2.13.5",
+  "team-agent-contracts",
+  "team-agent-skills",
+]
+
+[project.scripts]
+team-agent-genkit-compat = "team_agent_runtime_genkit.compatibility:main"
+
+[tool.uv.sources]
+team-agent-contracts = { workspace = true }
+team-agent-skills = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"

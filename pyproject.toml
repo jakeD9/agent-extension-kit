@@ -26,6 +26,7 @@ members = [
   "packages/contracts_py",
   "packages/database_py",
   "packages/skills_py",
+  "packages/runtime_genkit_py",
 ]
 
 [tool.pytest.ini_options]
@@ -36,6 +37,7 @@ testpaths = [
   "packages/context_core_py/tests",
   "packages/database_py/tests",
   "packages/skills_py/tests",
+  "packages/runtime_genkit_py/tests",
   "tests/integration",
 ]
 
@@ -57,4 +59,9 @@ packages = [
   "team_context_core",
   "team_context_service",
   "team_agent_skills",
+  "team_agent_runtime_genkit",
 ]
+
+[tool.team-agent.compatibility]
+python = "3.12"
+genkit-cli = "1.43.0"
