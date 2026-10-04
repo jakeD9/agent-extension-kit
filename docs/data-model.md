@@ -1,46 +1,52 @@
 # MongoDB Data Model
 
-## Overview
+## Status
 
-The default deployment uses one MongoDB database named `agent_extension_kit`. Separate collections preserve ownership, retention, and access boundaries without requiring multiple databases.
+S02 implements the persistent knowledge boundary in `team_context`. Collections marked "S02" have
+strict JSON Schema validators and migration-owned indexes; later collections remain target design.
 
-Only `knowledge_chunks` is implemented today. The remaining collections are reserved by the architecture and will be introduced by their roadmap slices. Applications should use repository interfaces rather than accessing collections directly.
+## `team_context`
 
-## Context collections
+Owned exclusively by the context service:
 
-| Collection | Purpose | Primary owner | Lifecycle |
-|---|---|---|---|
-| `knowledge_documents` | Metadata for each Git-owned source document, including project, authority, owner, and current revision. | Context service | Replaced when a source is re-indexed; Git remains canonical. |
-| `knowledge_chunks` | Searchable sections derived from approved documents, with access groups and revision-pinned citations. | Context service | Rebuilt during ingestion; stale chunks are removed. |
-| `knowledge_source_revisions` | Ingestion attempts, pinned Git revisions, counts, and failures. | Context service | Append-only operational history with configurable retention. |
-| `skills` | Searchable metadata for validated Git-owned skill packages. | Context service | Rebuilt during ingestion; skill files remain canonical in Git. |
-| `memories` | Approved team memories that may appear in retrieval results. | Context service | Retained until expiration or supersession; never silently promoted. |
-| `memory_proposals` | Candidate memories, evidence, review state, and approval history. | Context service | Retained for audit according to team policy. |
-| `context_audit_events` | Knowledge, memory, skill, and tool decisions with principal, policy, and outcome metadata. | Context service | Append-only with a defined retention period. |
+| Collection | Purpose |
+|---|---|
+| `documents` | **S02.** Git source metadata, ownership, authority, and current revision. |
+| `document_chunks` | **S02.** Authorized searchable chunks with revision-pinned citations. |
+| `source_revisions` | **S02.** Synchronization status, pinned revision, count, and failure state. |
+| `schema_migrations` | **S02.** Applied context schema versions. |
+| `skills` | Searchable metadata derived from Git-owned skill packages. |
+| `memories` | Approved, scoped memories with provenance, expiry, and supersession. |
+| `memory_proposals` | Candidate memories and authorized review history. |
+| `audit_events` | Append-only context authorization and mutation decisions. |
 
-## Runtime collections
+## `agent_runtime`
 
-| Collection | Purpose | Primary owner | Lifecycle |
-|---|---|---|---|
-| `slack_threads` | Mapping between Slack threads and durable conversations. | Slack agent | Retained while conversation continuity is required. |
-| `conversations` | Model messages, tool results, and summarized thread context. | Slack agent | Subject to conversation and privacy retention policy. |
-| `agent_runs` | Status, timing, limits, and results for user, automation, and coding runs. | Slack worker | Retained for operations and audit. |
-| `approvals` | Pending and resolved approval requests for consequential actions. | Slack worker | Retained with the related run for audit. |
-| `event_receipts` | Deduplication records for signed Slack and other incoming events. | Slack agent | Expires after the provider retry window plus a safety margin. |
-| `automations` | Enabled triggers, conditions, schedules, limits, cursors, and authorization policy. | Scheduler | Retained until explicitly removed; disabled definitions remain inspectable. |
-| `automation_runs` | Scheduled occurrences, leases, attempts, counts, and terminal failures. | Scheduler and worker | Retained for recovery and operational review. |
-| `code_reviews` | Review identity, exact head revision, publication result, and projected Slack reaction state. | Slack worker | Retained long enough to enforce idempotency and explain outcomes. |
+Owned by the team-agent control plane and never accessed by the context service:
 
-## Access rules
+| Collection | Purpose |
+|---|---|
+| `identities`, `slack_threads` | Company identity resolution and durable thread mapping. |
+| `sessions`, `session_snapshots`, `snapshot_chunks`, `session_pointers` | Genkit conversation metadata, bounded snapshot lineage, chunked state, and latest pointers. |
+| `session_events` | Optional ordered application events when required by the pinned session adapter; not a second authoritative history. |
+| `runs`, `workflow_steps` | Durable reasoning/workflow progress and limits. |
+| `coding_jobs`, `action_intents` | External job and side-effect recovery records. |
+| `approvals`, `event_receipts` | Capability-bound decisions and ingress deduplication. |
+| `automations`, `automation_runs` | Definitions, occurrences, leases, cursors, and retry state. |
+| `code_reviews`, `review_projections` | Exact-revision review authority and Slack projection state. |
 
-- The context service reads and writes context collections only.
-- The Slack agent, scheduler, and worker read and write runtime collections only.
-- The coding runner and local agents receive no MongoDB credentials.
-- Production deployments should use separate application identities with collection-scoped grants.
-- Cross-area workflows communicate through service contracts, not direct cross-owner collection reads.
+## Shared requirements
 
-## Shared document requirements
+Durable records have stable identifiers, creation/update timestamps, schema versions, and relevant
+project/run correlation. Retriable operations include idempotency keys; leased work includes owner,
+expiry, and fencing token. Unbounded events, logs, findings, and patches are stored separately or by
+artifact reference rather than embedded into one growing document.
 
-Every durable record should include a stable identifier and creation timestamp. Records tied to work should also carry the project and run identifier. Retriable operations store their idempotency key, while leased work stores lease owner and expiry. Sensitive payloads must be minimized or redacted before storage.
+Validators, migrations, and indexes are introduced by the first slice that writes each collection.
+TTL applies only to disposable records with defined retention, never authoritative completion records
+needed for deduplication or audit.
 
-Collection validators and indexes are added with the slice that first writes each collection. Their tests must cover uniqueness, authorization filters, retention fields, and the retry or lease behavior relevant to that collection.
+S02 indexes `document_chunks` by project, authority, access group, and source before application
+scoring, plus source/revision for provenance inspection. `(source_id, revision)` is unique in
+`source_revisions`. Synchronization is idempotent, prunes stale source documents/chunks, records
+failed attempts, and is retried during readiness recovery.

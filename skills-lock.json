@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "developing-genkit-dart": {
+      "source": "genkit-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/developing-genkit-dart/SKILL.md",
+      "computedHash": "7cb9de5a58dced3bb65f3f6a81ee79cc6fe48f0689a703d8ab9d2298dee1fc14"
+    },
+    "developing-genkit-go": {
+      "source": "genkit-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/developing-genkit-go/SKILL.md",
+      "computedHash": "e4fe2b7d2853a75ec9ee664a0e367868f783df156006c9b605619c3b517256ee"
+    },
+    "developing-genkit-js": {
+      "source": "genkit-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/developing-genkit-js/SKILL.md",
+      "computedHash": "b8798a67cc766509f029ac0b9d4a2f432cce58e1203565acf1aec94cd0a2fb4a"
+    },
+    "developing-genkit-python": {
+      "source": "genkit-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/developing-genkit-python/SKILL.md",
+      "computedHash": "1af3c74cb881ccf0edfdf406fc629413dc749ddd5f6bf67fffce802be879ef0f"
+    }
+  }
+}

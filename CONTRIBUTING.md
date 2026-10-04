@@ -1,13 +1,21 @@
 # Contributing
 
-Use Node.js 24 and the pnpm version declared by the repository. Keep changes inside one roadmap slice when possible and test behavior through public interfaces.
+Use Python 3.12 and the uv lockfile. Keep changes inside one roadmap workstream and begin a fresh
+session by reading the canonical architecture brief, workstream status, the slice brief, and its
+dependency summaries.
 
 Before submitting a change, run:
 
 ```sh
-pnpm check
-pnpm test
-pnpm build
+uv lock --check
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run pytest
+uv build --all-packages
 ```
 
-New skills need positive trigger cases, negative trigger cases, and one end-to-end fixture. New providers implement existing ports and pass the shared contract suite rather than adding provider checks to core services.
+Only claim live provider or external-service behavior when the corresponding opt-in test actually
+ran. New skills need positive and negative trigger cases plus an end-to-end fixture. Provider and
+harness integrations implement shared ports and pass contract suites rather than adding provider
+conditionals to core services.

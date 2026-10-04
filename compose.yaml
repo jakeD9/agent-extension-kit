@@ -2,13 +2,38 @@ services:
   mongo:
     image: mongo:8.0
     restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-local-root-password}
+      TEAM_CONTEXT_MONGODB_DATABASE: ${TEAM_CONTEXT_MONGODB_DATABASE:-team_context}
+      TEAM_CONTEXT_MONGODB_USERNAME: ${TEAM_CONTEXT_MONGODB_USERNAME:-team_context_service}
+      TEAM_CONTEXT_MONGODB_PASSWORD: ${TEAM_CONTEXT_MONGODB_PASSWORD:-local-context-password}
+      AGENT_RUNTIME_MONGODB_DATABASE: ${AGENT_RUNTIME_MONGODB_DATABASE:-agent_runtime}
+      AGENT_RUNTIME_MONGODB_USERNAME: ${AGENT_RUNTIME_MONGODB_USERNAME:-team_agent_service}
+      AGENT_RUNTIME_MONGODB_PASSWORD: ${AGENT_RUNTIME_MONGODB_PASSWORD:-local-runtime-password}
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test:
+        [
+          "CMD",
+          "mongosh",
+          "--quiet",
+          "--username",
+          "${MONGO_ROOT_USERNAME:-root}",
+          "--password",
+          "${MONGO_ROOT_PASSWORD:-local-root-password}",
+          "--authenticationDatabase",
+          "admin",
+          "--eval",
+          "db.adminCommand('ping').ok",
+        ]
       interval: 5s
       timeout: 3s
       retries: 20
+    ports:
+      - "${MONGODB_PORT:-27017}:27017"
     volumes:
       - team-context-data:/data/db
+      - ./ops/mongo/init-users.js:/docker-entrypoint-initdb.d/init-users.js:ro
 
   team-context:
     build:
@@ -16,18 +41,19 @@ services:
       target: team-context
     environment:
       HTTP_PORT: 3000
-      MONGODB_URI: mongodb://mongo:27017
-      MONGODB_DATABASE: agent_extension_kit
       CONTENT_PATH: /app/extension
       CONTENT_REVISION: ${CONTENT_REVISION:-local-example}
       DEV_AUTH_PRINCIPALS: '${DEV_AUTH_PRINCIPALS:-{"dev-token":{"id":"local-developer","groups":["engineering"],"projects":["event-ingestion"],"roles":["approver"]}}}'
+      TEAM_CONTEXT_MONGODB_URI: mongodb://${TEAM_CONTEXT_MONGODB_USERNAME:-team_context_service}:${TEAM_CONTEXT_MONGODB_PASSWORD:-local-context-password}@mongo:27017/${TEAM_CONTEXT_MONGODB_DATABASE:-team_context}?authSource=${TEAM_CONTEXT_MONGODB_DATABASE:-team_context}
+      TEAM_CONTEXT_MONGODB_DATABASE: ${TEAM_CONTEXT_MONGODB_DATABASE:-team_context}
+      AGENT_RUNTIME_MONGODB_DATABASE: ${AGENT_RUNTIME_MONGODB_DATABASE:-agent_runtime}
+    ports:
+      - "3000:3000"
     depends_on:
       mongo:
         condition: service_healthy
-    ports:
-      - "3000:3000"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/ready"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/ready')"]
       interval: 5s
       timeout: 3s
       retries: 20

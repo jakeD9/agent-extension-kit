@@ -1,0 +1,54 @@
+[project]
+name = "agent-extension-kit"
+version = "0.2.0"
+description = "Portable team context and agent orchestration kit"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28.1,<0.29",
+  "mypy>=1.18.2,<2",
+  "pytest>=8.4.2,<9",
+  "ruff>=0.14.0,<0.15",
+  "types-pyyaml>=6.0.12.20250915,<7",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+  "apps/context_service",
+  "packages/auth_py",
+  "packages/context_core_py",
+  "packages/contracts_py",
+  "packages/database_py",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = [
+  "apps/context_service/tests",
+  "packages/context_core_py/tests",
+  "packages/database_py/tests",
+  "tests/integration",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = [
+  "team_agent_auth",
+  "team_agent_contracts",
+  "team_agent_database",
+  "team_context_core",
+  "team_context_service",
+]

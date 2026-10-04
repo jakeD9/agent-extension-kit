@@ -1,56 +1,68 @@
 # Architecture
 
-## Purpose
+## Purpose and current state
 
-The kit lets organizations fork one repository, replace a content pack, and expose approved team context to local and hosted agents without making that context globally available or embedding policy in prompts.
+The kit lets an organization expose approved team context to local and hosted agents without making
+that context globally available or embedding authorization in prompts. Genkit Python is the planned
+hosted orchestration runtime, initially through an explicit OpenAI model configuration; local Codex
+and Claude integrations remain independent of Genkit.
+
+Migration proceeds as verified vertical slices. The current implementation is S02: a Python context
+service that validates a Git-owned extension pack, synchronizes its pinned revision into MongoDB,
+and provides authenticated, cited REST search. CLI/MCP, Genkit, coding jobs, Slack, and automation are
+not yet implemented.
 
 ## Runtime boundaries
 
-Three independently runnable images define the security and lifecycle boundaries:
+Three independently runnable images define the target security and lifecycle boundaries:
 
-1. The Slack agent verifies Slack input, owns conversation/run state, calls models, and dispatches work. Its server, scheduler, and worker modes may be separate processes.
-2. The team context service owns knowledge retrieval, skill discovery, memory governance, authorization, auditing, and allowlisted internal tools.
-3. The coding runner executes one bounded job in a disposable, credential-free workspace and exits with a structured result.
+1. The team agent owns ingress, identities, conversations, Genkit execution, workflow routing, and
+   automation records. It cannot directly access shared-context storage or repository shells.
+2. The context service owns authorized retrieval, ingestion, skills, governed team memory, narrow
+   internal tools, and context audit. It does not orchestrate arbitrary agents.
+3. The coding runner handles one pinned repository job in a disposable workspace. A trusted supervisor
+   owns credentials, policy, independent checks, and permitted publication.
 
-The team-context CLI is a workspace binary, not a fourth image. Its MCP stdio mode adapts local agent calls to the authenticated REST service. MCP is an adapter rather than the system architecture.
+Genkit's model and agent execution is unrelated to the disposable coding runner. The OpenAI model
+adapter is also distinct from the Codex CLI harness. Application code—not an agent prompt—owns
+authorization, durable execution, validation, and external side effects.
 
 ## Source-of-truth boundaries
 
 - Git owns approved knowledge, skills, conventions, and architecture decisions.
-- One `agent_extension_kit` MongoDB database stores all durable state by default.
-- Knowledge, skills, memories, context audits, Slack threads, agent runs, approvals, event receipts, automations, leases, and review records remain separated into purpose-specific collections.
-- Services receive only the collection permissions they need. Local agents receive no MongoDB credential.
+- The `team_context` MongoDB database owns derived knowledge indexes and source revision state; it
+  will also own governed memories and context audit.
+- The `agent_runtime` MongoDB database will own conversations, Genkit snapshots/state, workflows, jobs,
+  approvals, automations, reviews, and projections.
+- The databases use distinct service credentials. Only the context service can access `team_context`.
+- Local agents and coding runners receive no MongoDB credentials.
 
-The single-database default keeps local and small-team deployments simple. Larger deployments may route the same repository interfaces to separate databases without changing agent-facing contracts.
+The in-memory knowledge index remains available for tests and mock mode. Production startup uses the
+MongoDB adapter, applies strict validators/indexes, and synchronizes the configured content revision
+without changing the knowledge-service contract.
 
-See [MongoDB Data Model](data-model.md) for the collection catalog, ownership, and lifecycle rules.
+## Extension and retrieval invariants
 
-Every returned knowledge item includes repository, path, revision, and optional heading. Authorization filters are applied before candidate text reaches the scorer or model.
+An extension pack contains a validated manifest, knowledge roots, and portable skill packages.
+Every returned knowledge item carries repository, path, revision, and optional heading. Project,
+group, and authority filters are applied before scoring. Repository content is untrusted input and
+cannot grant tool authority.
 
-## Extension packs
+REST is the primary context interface. MCP and CLI will adapt the same application services and
+policy decisions. Genkit-specific types stay inside `runtime_genkit`.
 
-An extension pack contains a validated manifest, knowledge roots, and portable skill packages. A fork changes content and authorization metadata without editing framework code. Samples are fictional, removable, and carry no authority outside development.
-
-The local index uses deterministic lexical scoring over MongoDB-backed authorized chunks. An Atlas adapter may add lexical/vector fusion behind the same knowledge-index port without changing REST, CLI, or MCP contracts.
-
-## Trust and execution
-
-The model-facing harness never receives a Git write credential. A trusted executor supplies a credential-free workspace, receives a patch and structured result, recreates the patch in a clean checkout, enforces diff policy, runs independent checks, and only then publishes a namespaced branch or draft pull request.
-
-Local Docker execution is for development. Production systems provide another job-executor adapter and must not mount the Docker socket into an internet-facing Slack process.
-
-Retrieved documents and repositories are untrusted input. Tool descriptions, application services, and execution policy—not prompts alone—enforce authorization, limits, and prohibited actions.
-
-## API rules
-
-The service exposes additive `/v1` contracts. It uses bearer authentication, cursor pagination for lists, machine-readable error codes, and request IDs. Retriable writes require idempotency keys. Consequential operations use explicit action endpoints and audit the resolved principal, policy, input digest, outcome, and run ID.
-
-Jobs have active (`queued`, `running`), suspended (`needs_input`, `awaiting_approval`), and terminal states. Resume and cancel are idempotent and validated against the state machine.
+Git-owned team skills remain provider neutral. The runtime resolves and pins an authorized subset
+through the context service before projecting it into Genkit Skills middleware. The checked-in
+`developing-genkit-python` agent skill guides repository development only; it does not grant hosted
+runtime capabilities.
 
 ## Operational invariants
 
-- Long-running processes expose liveness and dependency-aware readiness endpoints.
-- Logs are structured and redact secrets and sensitive payloads.
-- Slack events, scheduled occurrences, coding jobs, and review revisions are deduplicated by durable keys.
-- Exhausted work becomes an inspectable failure; it never retries indefinitely.
-- Automatic merge, deploy, production mutation, and unrestricted shell access are outside the kit.
+- Long-running processes expose liveness and dependency-aware readiness.
+- The context service receives only context-database credentials. Compose proves those credentials
+  cannot read `agent_runtime`; a configuration guard also rejects identical database names.
+- Logs and artifacts minimize and redact sensitive values.
+- Retriable external actions use durable idempotency keys and reconcile uncertain outcomes.
+- Coding credentials are unavailable to model and verification environments.
+- Automatic merge, deploy, production mutation, unrestricted shell, and recursive agent spawning are
+  outside the kit.

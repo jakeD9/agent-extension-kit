@@ -1,0 +1,27 @@
+[project]
+name = "team-context-service"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.118.0,<1",
+  "pydantic>=2.12.0,<3",
+  "pyyaml>=6.0.3,<7",
+  "team-agent-auth",
+  "team-agent-contracts",
+  "team-agent-database",
+  "team-context-core",
+  "uvicorn>=0.37.0,<1",
+]
+
+[project.scripts]
+team-context-service = "team_context_service.main:run"
+
+[tool.uv.sources]
+team-agent-auth = { workspace = true }
+team-agent-contracts = { workspace = true }
+team-agent-database = { workspace = true }
+team-context-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"

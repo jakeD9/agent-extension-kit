@@ -1,18 +1,21 @@
 # Agent Extension Kit
 
-A forkable reference implementation for giving team agents approved knowledge, reusable skills, governed memory, and narrowly scoped tools. The kit keeps canonical content in Git, runtime indexes and state in MongoDB, and model/provider integrations behind replaceable ports.
+A forkable reference implementation for giving team agents approved knowledge, reusable skills,
+governed memory, and narrowly scoped tools. Genkit Python will coordinate hosted agents through an
+initial OpenAI model path, while the extension kit remains usable by local Codex and Claude clients
+without Genkit or database credentials.
 
-One MongoDB database is used by default, with separate collections for knowledge, memory, conversations, runs, and automation state.
-
-The first usable release is the local context extension: authenticated REST, CLI, and MCP access to revision-pinned sample knowledge. Slack orchestration, disposable coding jobs, and automation are delivered as later roadmap slices.
+The migration is intentionally incremental. The current S02 implementation provides authenticated,
+revision-pinned knowledge search from a persistent MongoDB-backed Python service. CLI/MCP, Genkit
+orchestration, coding runners, Slack, and automations arrive in later roadmap slices.
 
 ## Quick start
 
-Requirements: Node.js 24, pnpm 10, and Docker.
+Requirements: Docker with Compose. The development stack creates separate database users for
+`team_context` and `agent_runtime` and persists MongoDB data in a named volume.
 
 ```sh
 cp .env.example .env
-pnpm install
 docker compose up --build
 ```
 
@@ -23,43 +26,48 @@ curl -s http://localhost:3000/v1/knowledge/search \
   -H 'Authorization: Bearer dev-token' \
   -H 'Content-Type: application/json' \
   -d '{"query":"stable idempotency key","project":"event-ingestion"}'
-
-TEAM_CONTEXT_TOKEN=dev-token pnpm team-context search "stable idempotency key" --project event-ingestion
 ```
 
-The repository-local Codex MCP configuration starts the same CLI in stdio mode. Restart Codex after starting the context service and setting `TEAM_CONTEXT_TOKEN`.
-
-## Customize a fork
-
-1. Change the identity, projects, and access groups in the extension manifest.
-2. Replace the clearly fictional Markdown under the knowledge and skills directories.
-3. Set a real content revision during deployment; never use `working-tree` for published citations.
-4. Replace development bearer identities with an implementation of the authentication port.
-5. Run `pnpm check`, `pnpm test`, and `pnpm build` before publishing the fork.
-
-No sample content is imported by framework packages. Removing the sample pack and pointing `CONTENT_PATH` at another validated pack is sufficient.
+`/ready` returns 503 until MongoDB is reachable, migrations have applied, and the configured Git
+revision has synchronized. To run the process directly, start MongoDB first, load `.env`, and use
+`uv run team-context-service`.
 
 ## Repository guide
 
-- `apps/` contains independently runnable processes and the CLI/MCP bridge.
-- `packages/` contains contracts and provider-neutral application ports.
-- `extension/` is the replaceable content pack.
-- `docs/architecture.md` records trust boundaries and invariants.
-- `docs/data-model.md` describes MongoDB collection ownership and lifecycle.
-- `ROADMAP.md` is the checkable delivery ledger.
+- `apps/` contains independently runnable processes. The Python context service is the first ported app.
+- `packages/` contains provider-neutral contracts and application ports.
+- `extension/` is the replaceable, Git-owned knowledge and skill pack.
+- `docs/architecture.md` records trust boundaries and implementation status.
+- `ROADMAP.md` is the dependency-ordered delivery ledger.
+- `.roadmap/workstreams/STATUS.md` tells a fresh session what to work on next.
+- `.agents/skills/developing-genkit-python/` contains the project-scoped Genkit development skill.
+
+The hyphenated TypeScript application and package directories remain temporarily as a parity oracle.
+They are removed in S03 after Python REST, CLI, and MCP parity is verified.
 
 ## Development
 
 ```sh
-pnpm check
-pnpm test
-pnpm build
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run pytest
+uv build --all-packages
 ```
 
-Tests use deterministic adapters. Live OpenAI, Codex, Slack, GitHub, and Atlas checks are opt-in and must never be required by CI.
+The default suite skips the live MongoDB integration test. With the Compose stack running:
+
+```sh
+TEST_TEAM_CONTEXT_MONGODB_URI="${TEAM_CONTEXT_MONGODB_URI:-mongodb://team_context_service:local-context-password@127.0.0.1:27017/team_context?authSource=team_context}" \
+  uv run pytest tests/integration/test_persistent_context.py
+```
+
+Ordinary CI uses deterministic adapters and fictional fixtures. Live model, coding harness, Slack,
+Git, and Atlas checks are opt-in and must never be required by the default test suite.
 
 ## Security
 
-This is a reference kit, not a production deployment. The static bearer authenticator and local Docker executor are development-only. See `SECURITY.md` and the hardening slice before exposing services or granting repository write access.
+This is a reference kit, not a production deployment. The static bearer authenticator is
+development-only. See `SECURITY.md` before exposing services or granting repository access.
 
 Licensed under the MIT License.

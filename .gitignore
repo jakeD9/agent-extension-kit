@@ -1,6 +1,11 @@
-.roadmap
 node_modules/
 dist/
 .env
 coverage/
 *.tsbuildinfo
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]

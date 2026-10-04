@@ -1,0 +1,13 @@
+[project]
+name = "team-agent-auth"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = ["team-agent-contracts"]
+
+[tool.uv.sources]
+team-agent-contracts = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"
+

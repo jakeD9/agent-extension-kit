@@ -1,0 +1,17 @@
+[project]
+name = "team-agent-database"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+  "pymongo>=4.13,<5",
+  "team-agent-contracts",
+  "team-context-core",
+]
+
+[tool.uv.sources]
+team-agent-contracts = { workspace = true }
+team-context-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"

@@ -1,32 +1,58 @@
 # Delivery Roadmap
 
-Checkboxes are updated only after the listed behavior has fresh verification evidence. Each slice is independently demonstrable.
+Each slice is designed for one focused implementation session. A checkbox changes only after the
+slice's acceptance criteria have fresh verification evidence. The canonical Genkit architecture
+brief and the workstream artifacts under `.roadmap/workstreams/` supply fresh-session context.
 
-- [x] **S01: Forkable content pack and cited REST search** `risk:high` `depends:[]`
-  > Verified: content-pack validation, pre-retrieval authorization, stable citations, MongoDB adapter, REST auth/error behavior, health/readiness, typecheck, and build.
-- [x] **S02: Project-scoped CLI and MCP parity** `risk:medium` `depends:[S01]`
-  > Verified: REST/CLI/MCP search parity, skill discovery, project-local Codex MCP configuration, typecheck, and build.
-- [ ] **S03: Governed team memory** `risk:medium` `depends:[S01,S02]`
-  > After this: users propose sourced memories, approvers promote them, and pending, expired, or superseded memories are not authoritative.
-- [ ] **S04: Isolated coding runner from the CLI** `risk:high` `depends:[S02]`
-  > After this: the idempotency fixture produces a tested patch and mock draft-PR result without exposing Git write credentials.
-- [ ] **S05: Grounded Slack Q&A** `risk:high` `depends:[S01,S02]`
-  > After this: a verified Slack request receives a cited response, duplicate events are ignored, and thread continuity survives restart.
-- [ ] **S06: Slack diagnose-and-fix workflow** `risk:high` `depends:[S03,S04,S05]`
-  > After this: the sample error retrieves context and a skill, launches the runner, and posts diagnosis, verification, and a mock PR link.
-- [ ] **S07: Event-driven merge-request review** `risk:medium` `depends:[S04,S05]`
-  > After this: one Slack merge-request event reviews one exact head SHA once and publishes durable reaction state.
-- [ ] **S08: Scheduled reconciliation** `risk:high` `depends:[S07]`
-  > After this: a leased six-hour sweep recovers missed events and repairs reaction drift without duplicate reviews.
-- [ ] **S09: Security and operational hardening** `risk:high` `depends:[S06,S08]`
-  > After this: authorization, approval, injection, limit, recovery, audit, and container-security suites pass.
-- [ ] **S10: Provider portability proof** `risk:medium` `depends:[S09]`
-  > After this: a second model/harness adapter passes the same contract and workflow suites without core changes.
+- [x] **S01: Python cited-search tracer** `risk:high` `depends:[]`
+  > After this: an authenticated REST request returns authorized, revision-pinned fixture knowledge from the Python service.
+- [x] **S02: Persistent context boundary** `risk:medium` `depends:[S01]`
+  > After this: cited retrieval survives restart and the context service cannot access runtime collections.
+- [ ] **S03: Authorized skill-catalog tracer** `risk:medium` `depends:[S02]`
+  > After this: authenticated REST callers can list and load only authorized, revision-pinned skills from the Python context service.
+- [ ] **S04: Local CLI/MCP parity and TypeScript cutover** `risk:medium` `depends:[S03]`
+  > After this: Python REST, CLI, and MCP agree on search and skill results with no Node runtime dependency.
+- [ ] **S05: Genkit Python and OpenAI compatibility gate** `risk:high` `depends:[S04]`
+  > After this: a locked executable proves the supported Genkit agent-or-flow path, OpenAI model adapter, Skills middleware, tools, structured output, streaming, sessions, aborts, and FastAPI integration.
+- [ ] **S06: Governed team memory** `risk:medium` `depends:[S04]`
+  > After this: authorized callers can propose, approve, supersede, expire, and search sourced memories consistently through REST, CLI, and MCP.
+- [ ] **S07: Genkit coordinator tracer** `risk:high` `depends:[S04,S05]`
+  > After this: a provider-neutral runtime turn uses an authorized pinned skill and scoped context tools to return structured cited output through the configured OpenAI model adapter.
+- [ ] **S08: Durable Genkit conversations** `risk:high` `depends:[S07]`
+  > After this: multi-turn state survives restart, same-thread turns serialize, and stale workers cannot update a conversation.
+- [ ] **S09: Durable mock coding jobs** `risk:high` `depends:[S08]`
+  > After this: a mock coding job can be submitted, observed, cancelled, recovered after restart, and completed once visibly.
+- [ ] **S10: Mock diagnose-and-fix workflow** `risk:high` `depends:[S06,S07,S09]`
+  > After this: the coordinator retrieves the fixture ADR and skill, suspends for a mock coding job, resumes with verification, and produces one mock draft-PR result.
+- [ ] **S11: Supervised Codex runner** `risk:high` `depends:[S10]`
+  > After this: the Codex CLI fixes the fixture in an isolated container and the supervisor independently validates its patch and tests.
+- [ ] **S12: Grounded Slack conversation** `risk:high` `depends:[S08]`
+  > After this: duplicate signed Slack events yield one cited reply and thread follow-ups survive restart.
+- [ ] **S13: Slack diagnose-and-fix integration** `risk:high` `depends:[S11,S12]`
+  > After this: one Slack request asynchronously completes the fixture coding workflow with explicit progress, failure, and mock-publication outcomes.
+- [ ] **S14: Exact-revision sequential review** `risk:high` `depends:[S11]`
+  > After this: a read-only review covers one exact head SHA and stale or unsupported findings cannot be published as current.
+- [ ] **S15: Event-driven review projection** `risk:medium` `depends:[S12,S14]`
+  > After this: repeated Slack events review one revision once and retain independently repairable publication and reaction state.
+- [ ] **S16: Scheduled reconciliation** `risk:high` `depends:[S15]`
+  > After this: a leased sweep recovers missed reviews and repairs projections without losing failed targets or duplicating reviews.
+- [ ] **S17: Bounded parallel review** `risk:high` `depends:[S14]`
+  > After this: correctness and security reviewers run in separate read-only jobs and produce one evidence-backed, restart-recoverable result.
+- [ ] **S18: Approval and real publication boundary** `risk:high` `depends:[S13,S17]`
+  > After this: only capability-bound, independently verified results can be published using supervisor-owned credentials.
+- [ ] **S19: Genkit provider portability proof** `risk:medium` `depends:[S07]`
+  > After this: configured OpenAI, Anthropic, and Gemini integrations satisfy shared contracts with explicit capability differences and no silent fallback.
+- [ ] **S20: Claude harness portability proof** `risk:medium` `depends:[S11]`
+  > After this: the same supervised coding contract executes through Claude without coordinator or workflow changes.
+- [ ] **S21: Security, recovery, and assembled-system proof** `risk:high` `depends:[S16,S18,S19,S20]`
+  > After this: all three images pass end-to-end fixture, security, injection, cancellation, restart, and side-effect reconciliation suites.
 
 ## Global completion checks
 
-- `pnpm check`
-- `pnpm test`
-- `pnpm build`
-- `docker compose build`
-- Slice-specific integration, security, and workflow evals
+- `uv lock --check`
+- `uv run ruff check .`
+- `uv run ruff format --check .`
+- `uv run mypy`
+- `uv run pytest`
+- `uv build --all-packages`
+- Slice-specific image, Compose, integration, provider-contract, security, trace, and workflow checks

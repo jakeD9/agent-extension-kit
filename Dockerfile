@@ -1,27 +1,29 @@
 # syntax=docker/dockerfile:1.7
-FROM node:24-alpine AS workspace
-RUN corepack enable
+FROM ghcr.io/astral-sh/uv:0.11.7 AS uv
+
+FROM python:3.12-slim AS python-workspace
+COPY --from=uv /uv /uvx /bin/
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json vitest.config.ts ./
-COPY apps ./apps
-COPY packages ./packages
+
+COPY pyproject.toml uv.lock README.md ./
+COPY apps/context_service ./apps/context_service
+COPY packages/auth_py ./packages/auth_py
+COPY packages/context_core_py ./packages/context_core_py
+COPY packages/contracts_py ./packages/contracts_py
+COPY packages/database_py ./packages/database_py
 COPY extension ./extension
-RUN pnpm install --frozen-lockfile
-RUN pnpm build
 
-FROM workspace AS team-context
-ENV NODE_ENV=production HTTP_PORT=3000 CONTENT_PATH=/app/extension
-USER node
+RUN uv sync --locked --no-dev --all-packages
+
+FROM python-workspace AS team-context
+ENV CONTENT_PATH=/app/extension \
+    CONTENT_REVISION=local-example \
+    HTTP_HOST=0.0.0.0 \
+    HTTP_PORT=3000 \
+    PATH=/app/.venv/bin:$PATH
+RUN useradd --create-home --uid 10001 app
+USER app
 EXPOSE 3000
-CMD ["pnpm", "--filter", "@agent-extension-kit/context-service", "start"]
-
-FROM workspace AS slack-agent
-ENV NODE_ENV=production HTTP_PORT=3001 PROCESS_MODE=serve-slack
-USER node
-EXPOSE 3001
-CMD ["pnpm", "--filter", "@agent-extension-kit/slack-agent", "start"]
-
-FROM workspace AS coding-runner
-ENV NODE_ENV=production
-USER node
-CMD ["pnpm", "--filter", "@agent-extension-kit/coding-runner", "start"]
+HEALTHCHECK --interval=5s --timeout=3s --retries=20 \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/ready')"]
+CMD ["team-context-service"]
