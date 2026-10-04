@@ -31,5 +31,5 @@
 - Keep package IDs subject to the same authorization checks as list/get; do not treat possession of
   an identifier as authority.
 - Preserve the current revision instead of substituting latest when an exact revision is requested.
-- Keep installation in S05, local MCP/harness cutover in S06, Genkit compatibility in S07, and
+- Keep installation in S05, local MCP/harness parity in S06, Genkit compatibility in S07, and
   governed memory in S08.

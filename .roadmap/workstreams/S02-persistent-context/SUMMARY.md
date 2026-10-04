@@ -33,7 +33,6 @@
 - Reuse the application service for REST, CLI, and MCP parity; Mongo remains the knowledge index,
   while skills are rebuilt from the pinned Git/filesystem content pack.
 - Port skill metadata/body retrieval and project-scoped local-agent configuration before removing
-  the TypeScript parity implementation.
-- Remove the Node workspace only after parity and negative-authorization evidence is fresh; Git
-  history is the recovery path.
+  the TypeScript parity implementation. This was satisfied in S03, and the Node workspace was then
+  removed; Git history is the recovery path.
 - Keep governed memory and all Genkit/runtime records out of S03.

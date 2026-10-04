@@ -39,7 +39,7 @@ To run the process directly, start MongoDB first, load `.env`, and use
 
 ## Repository guide
 
-- `apps/` contains independently runnable processes. The Python context service is the first ported app.
+- `apps/` contains independently runnable Python processes.
 - `packages/` contains provider-neutral contracts and application ports.
 - `extension/` is the replaceable, Git-owned knowledge and skill pack.
 - `docs/architecture.md` records trust boundaries and implementation status.
@@ -47,8 +47,8 @@ To run the process directly, start MongoDB first, load `.env`, and use
 - `.roadmap/workstreams/STATUS.md` tells a fresh session what to work on next.
 - `.agents/skills/developing-genkit-python/` contains the project-scoped Genkit development skill.
 
-The hyphenated TypeScript application and package directories remain temporarily as a parity oracle.
-They are removed in S06 after Python REST, CLI, MCP, and harness-layout parity is verified.
+The repository is Python-only. Earlier TypeScript applications remain available through Git history
+if an implementation comparison is needed.
 
 ## Development
 

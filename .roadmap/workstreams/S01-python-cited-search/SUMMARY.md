@@ -36,5 +36,5 @@
 - Use `team_context` credentials only; do not let this service access `agent_runtime`.
 - Add explicit validators, migrations, indexes, source-revision synchronization, restart coverage,
   and dependency-aware readiness.
-- Keep the TypeScript implementation until S03 parity and cutover.
-
+- The temporary TypeScript parity implementation was retained through S03 and removed afterward;
+  Git history remains the recovery path.

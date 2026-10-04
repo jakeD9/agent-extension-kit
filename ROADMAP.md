@@ -14,8 +14,8 @@ brief and the workstream artifacts under `.roadmap/workstreams/` supply fresh-se
   > After this: authorized callers can resolve named/all selections to a hashed immutable manifest and download exact dependency-closed packages.
 - [ ] **S05: Verified skill pull and lockfile CLI** `risk:high` `depends:[S04]`
   > After this: local users and automations can atomically install targeted, authorized packages and reproduce them from a frozen lock.
-- [ ] **S06: Local MCP/harness parity and TypeScript cutover** `risk:medium` `depends:[S05]`
-  > After this: Python REST, CLI, and MCP agree on context behavior, Codex/Claude project layouts pass discovery fixtures, and no Node runtime remains.
+- [ ] **S06: Local MCP and harness parity** `risk:medium` `depends:[S05]`
+  > After this: Python REST, CLI, and MCP agree on context behavior, and Codex/Claude project layouts pass discovery fixtures.
 - [ ] **S07: Genkit Python and OpenAI compatibility gate** `risk:high` `depends:[S06]`
   > After this: a locked executable proves the supported Genkit agent-or-flow path, OpenAI model adapter, Skills middleware, tools, structured output, streaming, sessions, aborts, and FastAPI integration.
 - [ ] **S08: Governed team memory** `risk:medium` `depends:[S06]`
