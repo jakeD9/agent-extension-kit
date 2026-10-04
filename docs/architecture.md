@@ -11,8 +11,9 @@ Migration proceeds as verified vertical slices. The current implementation inclu
 service that validates a Git-owned extension pack, synchronizes only its knowledge index at a pinned
 revision into MongoDB, builds its skill catalog in memory, and provides authenticated cited search
 plus authorized skill list/get, immutable resolution, and exact package-download operations. A shared
-Python client/installer and `team-agent skills list/pull` CLI provide verified generic skill
-distribution. MCP, Genkit, coding jobs, Slack, and automation are not yet implemented.
+Python clients provide a JSON-first context CLI, a three-tool stdio MCP adapter, and verified
+generic/Codex/Claude skill distribution. Genkit, coding jobs, Slack, and automation are not yet
+implemented.
 
 ## Runtime boundaries
 
@@ -66,13 +67,14 @@ never resolve latest: an old lock requires the exact current-service package or 
 cache and otherwise fails. None of these interfaces are Genkit built-ins. Python JSON contracts use
 snake_case.
 
-REST is the primary context interface. MCP and CLI will adapt the same application services and
-policy decisions. Genkit-specific types stay inside `runtime_genkit`.
+REST is the primary context interface. The CLI and MCP adapters call those authenticated endpoints,
+validate the same shared Pydantic contracts, preserve opaque cursors, and never receive database
+credentials. Genkit-specific types stay inside `runtime_genkit`.
 
 Git-owned team skills remain provider neutral. The shared `SkillClient` resolves an authorized subset
-to an immutable lock and `SkillInstaller` installs a bounded generic projection. A later runtime will
-point Genkit Skills middleware at that projection, while coding runners will reuse the same lock and
-installer through harness-specific targets. The
+to an immutable lock and `SkillInstaller` installs a bounded generic projection or fixed
+project-scoped Codex/Claude discovery layout. A later runtime will point Genkit Skills middleware at
+that projection, while coding runners reuse the same target-preserving lock and installer. The
 checked-in `developing-genkit-python` agent skill guides repository development only; it does not
 grant hosted runtime capabilities.
 

@@ -8,7 +8,7 @@ skill APIs; they do not access Git or MongoDB directly and do not depend on Genk
 
 Each pull uses exactly one selection mode: one or more positional names, `--all`, or `--lock`.
 Named and all pulls resolve the current authorized catalog once, optionally requiring `--revision`,
-then create a schema-version `"1"` `skills.lock.json`. A lock records the project, generic target,
+then create a schema-version `"1"` `skills.lock.json`. A lock records the project and selected target,
 catalog revision, immutable package IDs, source revisions, complete file inventory, hashes, sizes,
 resources, and citations. Pydantic rejects extra fields and unsupported schema versions. Tokens and
 service URLs are never serialized.
@@ -21,12 +21,21 @@ package.
 
 ## Filesystem behavior
 
-The generic target installs each package under `<dest>/<skill-name>`. Before installation the client
-bounds response and metadata sizes, rejects unsafe or colliding relative paths, strictly decodes
-base64, independently derives the S04 canonical package ID, checks response metadata against the
+The generic target installs each package under `<dest>/<skill-name>`. The Codex and Claude targets
+require an existing explicit `--project-root` and use `.agents/skills/<skill-name>` and
+`.claude/skills/<skill-name>` respectively. Existing symbolic links anywhere in those fixed harness
+paths or `<project-root>/.team-agent/cache` are rejected, including dangling links, and cache
+confinement is rechecked before reads and writes. `--dest` cannot override a harness target. Before
+installation the client bounds response and metadata sizes, rejects unsafe or colliding relative
+paths, strictly decodes base64, independently derives the S04 canonical package ID, checks response
+metadata against the
 manifest, and checks every declared byte length and SHA-256 hash. Resources must be unique, safe, and
 declared files. All selected packages are staged before mutation, and each package directory is
 replaced with a same-filesystem rename. Package scripts are data and are never run.
+
+Project-scoped path enforcement is defense in depth against accidental or misconfigured writes. It
+is not a security boundary against another process with the same filesystem permissions changing
+paths concurrently; the isolated job runner or container workspace mount provides that boundary.
 
 `<dest>/.team-agent-ownership.json` records every path, size, and hash managed by the installer. A
 pull may replace a package directory only when its complete current inventory still matches that
@@ -43,6 +52,7 @@ the transaction contents and completes rollback before doing new filesystem work
 to delete a package directory that no longer matches the journal, protecting files added after an
 interruption.
 
-The default cache is the sibling `<dest-parent>/cache`, keeping project pulls local. Both cached
+The default generic cache is the sibling `<dest-parent>/cache`; harness targets use
+`<project-root>/.team-agent/cache`, keeping all pulls project-local. Both cached
 bundles and lock inputs are revalidated before use. The CLI takes credentials only from
 `TEAM_AGENT_TOKEN`; `TEAM_AGENT_CONTEXT_URL` selects the service endpoint.

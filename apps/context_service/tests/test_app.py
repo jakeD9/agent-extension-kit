@@ -288,6 +288,36 @@ def test_skill_endpoints_require_bearer_authentication(client: TestClient) -> No
     assert response.json()["error"]["code"] == "unauthorized"
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        (
+            "POST",
+            "/v1/knowledge/search",
+            {"query": "idempotency", "project": "p" * 201},
+        ),
+        ("GET", f"/v1/skills/{'s' * 129}?project=event-ingestion", None),
+        (
+            "GET",
+            f"/v1/skills/diagnose-and-fix?project=event-ingestion&revision={'r' * 257}",
+            None,
+        ),
+    ],
+)
+def test_model_facing_scope_identifiers_are_bounded(
+    client: TestClient, method: str, path: str, body: dict[str, str] | None
+) -> None:
+    response = client.request(
+        method,
+        path,
+        headers={"authorization": "Bearer engineering-token"},
+        json=body,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_failed"
+
+
 def test_skill_failure_uses_canonical_internal_error() -> None:
     pack = load_content_pack(EXTENSION_PATH, "fixture-revision")
 

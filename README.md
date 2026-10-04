@@ -7,9 +7,9 @@ without Genkit or database credentials.
 
 The migration is intentionally incremental. The current implementation provides authenticated,
 revision-pinned MongoDB knowledge search plus authorized skill discovery/loading from a pinned
-Git/filesystem catalog, immutable package downloads, and a shared verified pull client/installer.
-The MCP adapter, Genkit orchestration, coding runners, Slack, and automations arrive in later roadmap
-slices.
+Git/filesystem catalog, immutable package downloads, a shared verified pull client/installer,
+JSON-first context CLI, and project-scoped stdio MCP adapter. Genkit orchestration, coding runners,
+Slack, and automations arrive in later roadmap slices.
 
 ## Quick start
 
@@ -52,13 +52,34 @@ uv run team-agent skills pull diagnose-and-fix \
   --project event-ingestion --dest .team-agent/skills
 uv run team-agent skills pull --lock .team-agent/skills/skills.lock.json \
   --dest /tmp/job-skills --frozen --non-interactive
+uv run team-agent skills pull diagnose-and-fix --project event-ingestion \
+  --target codex --project-root .
+uv run team-agent skills pull diagnose-and-fix --project event-ingestion \
+  --target claude --project-root .
 ```
 
 `skills.lock.json` contains only immutable provenance and hashes. Pulls verify all paths, sizes, and
 hashes before replacing any managed package; preserve unmanaged files and unselected packages; and
 never execute downloaded scripts. `--json` provides machine-readable list, success, and error output.
-S05 supports the provider-neutral `generic` target only; Codex and Claude layouts are later slices.
-Lock pulls derive their project from the validated lock; an optional explicit `--project` must match.
+The `generic` target writes to `--dest`. Codex and Claude targets require an explicit
+`--project-root` and install only to `.agents/skills` or `.claude/skills` below it. Every layout keeps
+the same immutable provenance and lock. Lock pulls derive their project from the validated lock; an
+optional explicit `--project` must match.
+
+## Querying local context
+
+`team-context` emits the same snake_case contracts as REST by default:
+
+```sh
+uv run team-context search "stable idempotency key" --project event-ingestion
+uv run team-context skill list --project event-ingestion
+uv run team-context skill get diagnose-and-fix --project event-ingestion
+```
+
+`team-context-mcp` exposes the same authorized search and skill list/get behavior as three read-only
+stdio tools. The checked-in `.codex/config.toml` and `.mcp.json` are project-scoped launch examples;
+set `TEAM_AGENT_CONTEXT_URL` and `TEAM_AGENT_TOKEN` in the host environment. See
+`docs/local-context.md` for tool behavior, pagination, errors, and verification.
 
 ## Repository guide
 

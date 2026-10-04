@@ -17,7 +17,13 @@ from team_agent_contracts import (
     SkillLock,
     SkillLockPackage,
 )
-from team_agent_skills import SkillClient, SkillDistributionError, SkillInstaller
+from team_agent_skills import (
+    SkillClient,
+    SkillDistributionError,
+    SkillInstaller,
+    harness_cache_directory,
+    harness_skill_directory,
+)
 from team_agent_skills.cli import run
 
 
@@ -714,6 +720,23 @@ def test_client_errors_do_not_disclose_bearer_token() -> None:
     assert token not in str(captured.value)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://context.example",
+        "https://user:secret@context.example",
+        "https://context.example/prefix",
+        "https://context.example?tenant=secret",
+        "https://context.example#fragment",
+    ],
+)
+def test_skill_client_rejects_unsafe_service_url_before_attaching_bearer(url: str) -> None:
+    with pytest.raises(SkillDistributionError, match="root HTTP") as captured:
+        SkillClient(url, "secret")
+
+    assert url not in str(captured.value)
+
+
 def test_cli_rejects_ambiguous_selection_before_connecting(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -739,3 +762,479 @@ def test_cli_rejects_ambiguous_selection_before_connecting(
     assert "Exactly one" in error
     assert "TEAM_AGENT_TOKEN" not in error
     assert "super-secret-token-value" not in error
+
+
+@pytest.mark.parametrize(
+    ("target", "relative"),
+    [("codex", ".agents/skills"), ("claude", ".claude/skills")],
+)
+def test_harness_targets_install_in_project_discovery_layout_and_preserve_lock(
+    tmp_path: Path, target: str, relative: str
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    destination = harness_skill_directory(project_root, target)  # type: ignore[arg-type]
+    manifest = _manifest()
+
+    result = SkillInstaller(
+        destination,
+        project_root / ".team-agent/cache",
+        project_root=project_root,
+    ).pull(
+        _client([manifest]),
+        project="platform",
+        names=[manifest.name],
+        target=target,  # type: ignore[arg-type]
+    )
+
+    assert destination == project_root / relative
+    assert destination.joinpath(manifest.name, "SKILL.md").read_bytes() == b"instructions"
+    lock = SkillLock.model_validate_json(destination.joinpath("skills.lock.json").read_text())
+    assert lock.target == target
+    assert lock.packages[0].package_id == manifest.package_id
+    assert lock.packages[0].source_revision == manifest.source_revision
+    assert lock.packages[0].citation == manifest.citation
+    assert result.destination == str(destination)
+
+
+@pytest.mark.parametrize("target", ["codex", "claude"])
+def test_harness_pull_requires_project_root_through_public_installer_interface(
+    tmp_path: Path, target: distribution.SkillTarget
+) -> None:
+    manifest = _manifest()
+    relative = ".agents/skills" if target == "codex" else ".claude/skills"
+
+    with pytest.raises(SkillDistributionError, match="project root"):
+        SkillInstaller(tmp_path / relative, tmp_path / ".team-agent/cache").pull(
+            _client([manifest]),
+            project="platform",
+            names=[manifest.name],
+            target=target,
+        )
+
+
+@pytest.mark.parametrize("target", ["codex", "claude"])
+@pytest.mark.parametrize("mismatch", ["destination", "cache"])
+def test_harness_pull_rejects_noncanonical_paths_through_public_installer_interface(
+    tmp_path: Path, mismatch: str, target: distribution.SkillTarget
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    destination = harness_skill_directory(project_root, target)
+    cache = harness_cache_directory(project_root)
+    if mismatch == "destination":
+        destination = project_root / "skills"
+    else:
+        cache = project_root / "cache"
+
+    with pytest.raises(SkillDistributionError, match=r"harness (destination|cache)"):
+        SkillInstaller(destination, cache, project_root=project_root).pull(
+            _client([_manifest()]),
+            project="platform",
+            names=["diagnose-and-fix"],
+            target=target,
+        )
+
+
+def test_generic_pull_rejects_project_root_through_public_installer_interface(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+
+    with pytest.raises(SkillDistributionError, match="only valid for codex and claude"):
+        SkillInstaller(
+            tmp_path / "skills",
+            tmp_path / "cache",
+            project_root=project_root,
+        ).pull(
+            _client([_manifest()]),
+            project="platform",
+            names=["diagnose-and-fix"],
+        )
+
+
+def test_harness_target_rejects_symlinked_project_discovery_parent(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    outside.mkdir()
+    project_root.joinpath(".agents").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(SkillDistributionError, match="symbolic link"):
+        harness_skill_directory(project_root, "codex")
+
+
+@pytest.mark.parametrize("dangling", [False, True])
+def test_harness_cache_rejects_team_agent_symlink_without_writing_outside(
+    tmp_path: Path, dangling: bool
+) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    if not dangling:
+        outside.mkdir()
+    project_root.joinpath(".team-agent").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(SkillDistributionError, match="symbolic link"):
+        harness_cache_directory(project_root)
+
+    assert not outside.joinpath("cache").exists()
+
+
+def test_harness_installer_rechecks_cache_path_before_read_or_write(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    outside.mkdir()
+    destination = harness_skill_directory(project_root, "codex")
+    cache = harness_cache_directory(project_root)
+    installer = SkillInstaller(destination, cache, project_root=project_root)
+    project_root.joinpath(".team-agent").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(SkillDistributionError, match="symbolic link"):
+        installer.pull(
+            _client([_manifest()]),
+            project="platform",
+            names=["diagnose-and-fix"],
+            target="codex",
+        )
+
+    assert not outside.joinpath("cache").exists()
+
+
+def test_harness_cache_rejects_preexisting_package_directory_symlink(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    outside.mkdir()
+    manifest = _manifest()
+    destination = harness_skill_directory(project_root, "codex")
+    cache = harness_cache_directory(project_root)
+    package_cache = cache / manifest.package_id.removeprefix("sha256:")
+    cache.mkdir(parents=True)
+    package_cache.symlink_to(outside, target_is_directory=True)
+    base = _handler([manifest])
+    downloads = 0
+
+    def count_downloads(request: httpx.Request) -> httpx.Response:
+        nonlocal downloads
+        if request.url.path.startswith("/v1/skill-packages/"):
+            downloads += 1
+        return base.handle_request(request)
+
+    client = SkillClient(
+        "https://context.example",
+        "secret",
+        transport=httpx.MockTransport(count_downloads),
+    )
+
+    with pytest.raises(SkillDistributionError, match="cache package path"):
+        SkillInstaller(destination, cache, project_root=project_root).pull(
+            client,
+            project="platform",
+            names=[manifest.name],
+            target="codex",
+        )
+
+    assert downloads == 0
+    assert not outside.joinpath("bundle.json").exists()
+
+
+def test_harness_cache_rejects_symlinked_bundle_without_downloading(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    outside.mkdir()
+    manifest = _manifest()
+    destination = harness_skill_directory(project_root, "codex")
+    cache = harness_cache_directory(project_root)
+    package_cache = cache / manifest.package_id.removeprefix("sha256:")
+    package_cache.mkdir(parents=True)
+    outside_bundle = outside / "bundle.json"
+    outside_bundle.write_text("outside sentinel")
+    package_cache.joinpath("bundle.json").symlink_to(outside_bundle)
+    base = _handler([manifest])
+    downloads = 0
+
+    def count_downloads(request: httpx.Request) -> httpx.Response:
+        nonlocal downloads
+        if request.url.path.startswith("/v1/skill-packages/"):
+            downloads += 1
+        return base.handle_request(request)
+
+    client = SkillClient(
+        "https://context.example",
+        "secret",
+        transport=httpx.MockTransport(count_downloads),
+    )
+
+    with pytest.raises(SkillDistributionError, match="cache bundle path"):
+        SkillInstaller(destination, cache, project_root=project_root).pull(
+            client,
+            project="platform",
+            names=[manifest.name],
+            target="codex",
+        )
+
+    assert downloads == 0
+    assert outside_bundle.read_text() == "outside sentinel"
+
+
+def test_harness_pull_rechecks_destination_after_resolution_before_writes(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    outside.mkdir()
+    manifest = _manifest()
+    base = _handler([manifest])
+    destination = harness_skill_directory(project_root, "codex")
+    cache = harness_cache_directory(project_root)
+
+    def swap_destination_then_respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/skills:resolve":
+            destination.rmdir()
+            destination.parent.rmdir()
+            destination.parent.symlink_to(outside, target_is_directory=True)
+        return base.handle_request(request)
+
+    client = SkillClient(
+        "https://context.example",
+        "secret",
+        transport=httpx.MockTransport(swap_destination_then_respond),
+    )
+
+    with pytest.raises(SkillDistributionError, match="symbolic link"):
+        SkillInstaller(destination, cache, project_root=project_root).pull(
+            client,
+            project="platform",
+            names=[manifest.name],
+            target="codex",
+        )
+
+    assert not outside.joinpath("skills").exists()
+
+
+def test_harness_installer_rechecks_cache_after_download_before_write(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    outside.mkdir()
+    manifest = _manifest()
+    base = _handler([manifest])
+
+    def swap_cache_then_respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v1/skill-packages/"):
+            project_root.joinpath(".team-agent").symlink_to(outside, target_is_directory=True)
+        return base.handle_request(request)
+
+    client = SkillClient(
+        "https://context.example",
+        "secret",
+        transport=httpx.MockTransport(swap_cache_then_respond),
+    )
+    installer = SkillInstaller(
+        harness_skill_directory(project_root, "codex"),
+        harness_cache_directory(project_root),
+        project_root=project_root,
+    )
+
+    with pytest.raises(SkillDistributionError, match="symbolic link"):
+        installer.pull(
+            client,
+            project="platform",
+            names=[manifest.name],
+            target="codex",
+        )
+
+    assert not outside.joinpath("cache").exists()
+
+
+def test_harness_cache_rejects_package_directory_symlink_created_during_download(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    outside.mkdir()
+    manifest = _manifest()
+    destination = harness_skill_directory(project_root, "codex")
+    cache = harness_cache_directory(project_root)
+    package_cache = cache / manifest.package_id.removeprefix("sha256:")
+    base = _handler([manifest])
+
+    def add_package_symlink_then_respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v1/skill-packages/"):
+            cache.mkdir(parents=True)
+            package_cache.symlink_to(outside, target_is_directory=True)
+        return base.handle_request(request)
+
+    client = SkillClient(
+        "https://context.example",
+        "secret",
+        transport=httpx.MockTransport(add_package_symlink_then_respond),
+    )
+
+    with pytest.raises(SkillDistributionError, match="cache package path"):
+        SkillInstaller(destination, cache, project_root=project_root).pull(
+            client,
+            project="platform",
+            names=[manifest.name],
+            target="codex",
+        )
+
+    assert not outside.joinpath("bundle.json").exists()
+
+
+def test_harness_pull_rechecks_destination_after_download_before_writes(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    project_root.mkdir()
+    outside.mkdir()
+    manifest = _manifest()
+    base = _handler([manifest])
+    destination = harness_skill_directory(project_root, "codex")
+    cache = harness_cache_directory(project_root)
+
+    def swap_destination_then_respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v1/skill-packages/"):
+            destination.rmdir()
+            destination.symlink_to(outside, target_is_directory=True)
+        return base.handle_request(request)
+
+    client = SkillClient(
+        "https://context.example",
+        "secret",
+        transport=httpx.MockTransport(swap_destination_then_respond),
+    )
+
+    with pytest.raises(SkillDistributionError, match="symbolic link"):
+        SkillInstaller(destination, cache, project_root=project_root).pull(
+            client,
+            project="platform",
+            names=[manifest.name],
+            target="codex",
+        )
+
+    assert not outside.joinpath(manifest.name).exists()
+
+
+def test_harness_commit_failure_rolls_back_with_shared_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    destination = harness_skill_directory(project_root, "codex")
+    cache = harness_cache_directory(project_root)
+    original = _manifest(content=b"original")
+    replacement = _manifest(content=b"replacement")
+    installer = SkillInstaller(destination, cache, project_root=project_root)
+    installer.pull(
+        _client([original], {original.name: b"original"}),
+        project="platform",
+        names=[original.name],
+        target="codex",
+    )
+    old_lock = destination.joinpath("skills.lock.json").read_bytes()
+    old_ownership = destination.joinpath(".team-agent-ownership.json").read_bytes()
+    real_replace = os.replace
+    failed = False
+
+    def fail_new_ownership(source: Any, target: Any) -> None:
+        nonlocal failed
+        source_path = Path(source)
+        target_path = Path(target)
+        if (
+            not failed
+            and target_path == destination / ".team-agent-ownership.json"
+            and source_path.parent == destination
+        ):
+            failed = True
+            raise OSError("simulated metadata interruption")
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_new_ownership)
+
+    with pytest.raises(SkillDistributionError, match="filesystem operation failed"):
+        installer.pull(
+            _client([replacement], {replacement.name: b"replacement"}),
+            project="platform",
+            names=[replacement.name],
+            target="codex",
+        )
+
+    assert destination.joinpath(original.name, "SKILL.md").read_bytes() == b"original"
+    assert destination.joinpath("skills.lock.json").read_bytes() == old_lock
+    assert destination.joinpath(".team-agent-ownership.json").read_bytes() == old_ownership
+    assert not destination.joinpath(".team-agent-transaction").exists()
+
+
+def test_harness_commit_rejects_managed_tree_changed_at_commit_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    destination = harness_skill_directory(project_root, "codex")
+    cache = harness_cache_directory(project_root)
+    original = _manifest(content=b"original")
+    replacement = _manifest(content=b"replacement")
+    installer = SkillInstaller(destination, cache, project_root=project_root)
+    installer.pull(
+        _client([original], {original.name: b"original"}),
+        project="platform",
+        names=[original.name],
+        target="codex",
+    )
+    original_commit = SkillInstaller._commit
+
+    def change_tree_then_commit(
+        current: SkillInstaller,
+        staging: Path,
+        lock: SkillLock,
+        ownership: Any,
+    ) -> None:
+        destination.joinpath(original.name, "unmanaged.txt").write_text("keep me")
+        original_commit(current, staging, lock, ownership)
+
+    monkeypatch.setattr(SkillInstaller, "_commit", change_tree_then_commit)
+
+    with pytest.raises(SkillDistributionError, match="Modified managed package"):
+        installer.pull(
+            _client([replacement], {replacement.name: b"replacement"}),
+            project="platform",
+            names=[replacement.name],
+            target="codex",
+        )
+
+    assert destination.joinpath(original.name, "unmanaged.txt").read_text() == "keep me"
+
+
+def test_cli_requires_explicit_project_root_for_harness_targets(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    status = run(
+        [
+            "skills",
+            "pull",
+            "diagnose-and-fix",
+            "--project",
+            "platform",
+            "--target",
+            "codex",
+        ],
+        environ={
+            "TEAM_AGENT_CONTEXT_URL": "https://context.example",
+            "TEAM_AGENT_TOKEN": "secret",
+        },
+    )
+
+    assert status == 2
+    assert "--project-root is required" in capsys.readouterr().err

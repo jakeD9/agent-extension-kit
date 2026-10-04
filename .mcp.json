@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "team-context": {
+      "command": "uv",
+      "args": ["run", "team-context-mcp"],
+      "env": {
+        "TEAM_AGENT_CONTEXT_URL": "${TEAM_AGENT_CONTEXT_URL}",
+        "TEAM_AGENT_TOKEN": "${TEAM_AGENT_TOKEN}"
+      }
+    }
+  }
+}

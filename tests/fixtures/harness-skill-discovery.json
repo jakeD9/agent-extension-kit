@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "observed_on": "2026-10-04",
+  "harnesses": {
+    "codex": {
+      "version": "codex-cli 0.154.0-alpha.6.2",
+      "project_skill_directory": ".agents/skills",
+      "verification": "fixture-and-local-cli"
+    },
+    "claude": {
+      "version": "not-installed",
+      "project_skill_directory": ".claude/skills",
+      "verification": "fixture-from-official-docs"
+    }
+  }
+}

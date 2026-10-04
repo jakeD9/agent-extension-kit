@@ -8,6 +8,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY apps/context_service ./apps/context_service
 COPY packages/auth_py ./packages/auth_py
+COPY packages/context_client_py ./packages/context_client_py
 COPY packages/context_core_py ./packages/context_core_py
 COPY packages/contracts_py ./packages/contracts_py
 COPY packages/database_py ./packages/database_py

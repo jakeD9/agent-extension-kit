@@ -4,6 +4,11 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+MAX_PROJECT_LENGTH = 200
+MAX_SKILL_NAME_LENGTH = 128
+MAX_REVISION_LENGTH = 256
+SKILL_NAME_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
+
 
 class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -25,13 +30,13 @@ class Principal(ContractModel):
 class Citation(ContractModel):
     repository: str
     path: str
-    revision: str
+    revision: str = Field(min_length=1, max_length=MAX_REVISION_LENGTH)
     heading: str | None = None
 
 
 class KnowledgeSearchRequest(ContractModel):
     query: str = Field(min_length=1, max_length=2_000)
-    project: str = Field(min_length=1)
+    project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
     limit: int = Field(default=8, ge=1, le=50)
 
 
@@ -50,22 +55,23 @@ class KnowledgeSearchResponse(ContractModel):
 
 
 class SkillListRequest(ContractModel):
-    project: str = Field(min_length=1)
+    project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
     limit: int = Field(default=50, ge=1, le=50)
     cursor: str | None = Field(default=None, min_length=1, max_length=4_096)
 
 
 class SkillGetRequest(ContractModel):
-    project: str = Field(min_length=1)
-    revision: str | None = Field(default=None, min_length=1)
+    name: str = Field(min_length=1, max_length=MAX_SKILL_NAME_LENGTH, pattern=SKILL_NAME_PATTERN)
+    project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
+    revision: str | None = Field(default=None, min_length=1, max_length=MAX_REVISION_LENGTH)
 
 
 class SkillPackageGetRequest(ContractModel):
-    project: str = Field(min_length=1)
+    project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
 
 
 class SkillSummary(ContractModel):
-    name: str
+    name: str = Field(min_length=1, max_length=MAX_SKILL_NAME_LENGTH, pattern=SKILL_NAME_PATTERN)
     description: str
     version: str
     projects: list[str]
@@ -97,10 +103,10 @@ class SkillFileManifest(ContractModel):
 class ImmutableSkillPackageManifest(ContractModel):
     schema_version: Literal["1"] = "1"
     package_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    name: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=MAX_SKILL_NAME_LENGTH, pattern=SKILL_NAME_PATTERN)
     description: str = Field(min_length=1)
     version: str = Field(min_length=1)
-    source_revision: str = Field(min_length=1)
+    source_revision: str = Field(min_length=1, max_length=MAX_REVISION_LENGTH)
     files: list[SkillFileManifest] = Field(min_length=1)
     resources: list[str] = Field(default_factory=list)
     citation: Citation
@@ -116,12 +122,22 @@ class SkillPackageBundle(ContractModel):
 
 
 class SkillResolveRequest(ContractModel):
-    project: str = Field(min_length=1)
-    names: list[Annotated[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]] | None = Field(
-        default=None, min_length=1, max_length=100
-    )
+    project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
+    names: (
+        list[
+            Annotated[
+                str,
+                Field(
+                    min_length=1,
+                    max_length=MAX_SKILL_NAME_LENGTH,
+                    pattern=SKILL_NAME_PATTERN,
+                ),
+            ]
+        ]
+        | None
+    ) = Field(default=None, min_length=1, max_length=100)
     all: bool = False
-    revision: str | None = Field(default=None, min_length=1)
+    revision: str | None = Field(default=None, min_length=1, max_length=MAX_REVISION_LENGTH)
 
     @model_validator(mode="after")
     def exactly_one_selection_mode(self) -> "SkillResolveRequest":
@@ -134,8 +150,8 @@ class SkillResolveRequest(ContractModel):
 
 class SkillResolutionManifest(ContractModel):
     schema_version: Literal["1"] = "1"
-    catalog_revision: str = Field(min_length=1)
-    project: str
+    catalog_revision: str = Field(min_length=1, max_length=MAX_REVISION_LENGTH)
+    project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
     selected_names: list[str]
     packages: list[ImmutableSkillPackageManifest]
 
@@ -155,9 +171,9 @@ class SkillLockPackage(ImmutableSkillPackageManifest):
 
 class SkillLock(ContractModel):
     schema_version: Literal["1"] = "1"
-    catalog_revision: str = Field(min_length=1)
-    project: str = Field(min_length=1)
-    target: Literal["generic"] = "generic"
+    catalog_revision: str = Field(min_length=1, max_length=MAX_REVISION_LENGTH)
+    project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
+    target: Literal["generic", "codex", "claude"] = "generic"
     packages: list[SkillLockPackage] = Field(max_length=100)
 
     @model_validator(mode="after")
@@ -185,6 +201,10 @@ class ErrorResponse(ContractModel):
 
 
 __all__ = [
+    "MAX_PROJECT_LENGTH",
+    "MAX_REVISION_LENGTH",
+    "MAX_SKILL_NAME_LENGTH",
+    "SKILL_NAME_PATTERN",
     "Authority",
     "Citation",
     "ErrorDetail",

@@ -225,7 +225,9 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
                 401,
             )
         try:
-            get_request = SkillGetRequest.model_validate(dict(request.query_params))
+            get_request = SkillGetRequest.model_validate(
+                {**dict(request.query_params), "name": name}
+            )
         except ValidationError:
             return _error(
                 "validation_failed",
@@ -234,7 +236,9 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
                 422,
             )
         try:
-            skill = await skills.get(name, get_request.project, principal, get_request.revision)
+            skill = await skills.get(
+                get_request.name, get_request.project, principal, get_request.revision
+            )
         except SkillRevisionNotFoundError:
             return _error(
                 "skill_revision_not_found",

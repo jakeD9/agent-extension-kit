@@ -21,6 +21,7 @@ package = false
 members = [
   "apps/context_service",
   "packages/auth_py",
+  "packages/context_client_py",
   "packages/context_core_py",
   "packages/contracts_py",
   "packages/database_py",
@@ -31,6 +32,7 @@ members = [
 addopts = "-ra"
 testpaths = [
   "apps/context_service/tests",
+  "packages/context_client_py/tests",
   "packages/context_core_py/tests",
   "packages/database_py/tests",
   "packages/skills_py/tests",
@@ -49,6 +51,7 @@ python_version = "3.12"
 strict = true
 packages = [
   "team_agent_auth",
+  "team_agent_context",
   "team_agent_contracts",
   "team_agent_database",
   "team_context_core",

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<evals server="team-context" transport="stdio" schema_version="1">
+  <eval id="1" category="happy-path">
+    <question>Find the approved event-ingestion idempotency guidance, then discover and load the most relevant repair skill. Summarize the guidance with its citation.</question>
+    <expected>Call search_team_knowledge for event-ingestion, call list_team_skills, choose diagnose-and-fix from its metadata, then call get_team_skill and cite the returned repository, path, and revision.</expected>
+  </eval>
+  <eval id="2" category="happy-path">
+    <question>Determine whether the platform project has an approved skill for diagnosing a repository failure and explain its first required action.</question>
+    <expected>Call list_team_skills for platform, select a relevant visible skill, call get_team_skill with the exact returned name, and answer only from the loaded body.</expected>
+  </eval>
+  <eval id="3" category="happy-path">
+    <question>Research the team's stable identifier convention and check whether any authorized skill can guide implementation of the resulting fix.</question>
+    <expected>Call search_team_knowledge with a focused query, call list_team_skills, load a relevant listed skill if present, and distinguish knowledge facts from workflow instructions.</expected>
+  </eval>
+  <eval id="4" category="error-recovery">
+    <question>Load a skill called repair_bug for platform. If the request is invalid, recover and determine whether the intended kebab-case skill exists.</question>
+    <expected>The invalid get_team_skill call fails actionably; call list_team_skills, infer the valid listed name rather than guessing, then call get_team_skill with that exact kebab-case name.</expected>
+  </eval>
+  <eval id="5" category="error-recovery">
+    <question>Look up a private skill in restricted-project. If access is denied or it is hidden, continue with only context actually visible in event-ingestion and state the limitation.</question>
+    <expected>Call get_team_skill and handle its safe not-found/authorization error without inferring existence, call list_team_skills for the authorized project, load only a returned name, and explicitly state the scope limitation.</expected>
+  </eval>
+  <eval id="6" category="pagination">
+    <question>Inspect the complete authorized skill catalog with a page size of one, then load the best skill for repository diagnosis.</question>
+    <expected>Call list_team_skills with limit 1, repeat with each next_cursor unchanged until absent, compare the accumulated metadata, then call get_team_skill for the selected name.</expected>
+  </eval>
+  <eval id="7" category="partial-information">
+    <question>Decide whether available approved guidance is sufficient to recommend an idempotency implementation. If search evidence is weak, refine once before answering.</question>
+    <expected>Call search_team_knowledge, assess citation and excerpt relevance, call search_team_knowledge once more with a narrower query when needed, and answer with uncertainty rather than inventing missing detail.</expected>
+  </eval>
+  <eval id="8" category="partial-information">
+    <question>Compare the visible skill metadata with knowledge-search evidence and decide whether to load a full skill body for this architecture question.</question>
+    <expected>Call list_team_skills and search_team_knowledge, decide from descriptions whether a skill is relevant, and call get_team_skill only when justified; explain the decision.</expected>
+  </eval>
+  <eval id="9" category="cross-tool-composition">
+    <question>Create a sourced diagnosis checklist for an event-ingestion duplicate-processing bug using approved knowledge and authorized workflow instructions.</question>
+    <expected>Call search_team_knowledge for duplicate/idempotency guidance, call list_team_skills, call get_team_skill for diagnose-and-fix, and synthesize a checklist that preserves knowledge citations and does not treat the skill as authority.</expected>
+  </eval>
+  <eval id="10" category="cross-tool-composition">
+    <question>Verify that a requested skill revision matches the knowledge revision used for a recommendation; if it is unavailable, stop rather than substitute another revision.</question>
+    <expected>Call search_team_knowledge and capture its citation revision, call list_team_skills, call get_team_skill with the required exact revision, and either compose matching evidence or report the revision mismatch without fallback.</expected>
+  </eval>
+</evals>

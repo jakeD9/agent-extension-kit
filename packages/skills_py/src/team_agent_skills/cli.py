@@ -6,7 +6,13 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
 
-from team_agent_skills.distribution import SkillClient, SkillDistributionError, SkillInstaller
+from team_agent_skills.distribution import (
+    SkillClient,
+    SkillDistributionError,
+    SkillInstaller,
+    harness_cache_directory,
+    harness_skill_directory,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -24,9 +30,10 @@ def _parser() -> argparse.ArgumentParser:
     pull.add_argument("--all", action="store_true", dest="all_skills")
     pull.add_argument("--lock", type=Path)
     pull.add_argument("--project")
-    pull.add_argument("--dest", type=Path, default=Path(".team-agent/skills"))
+    pull.add_argument("--dest", type=Path)
+    pull.add_argument("--project-root", type=Path)
     pull.add_argument("--revision")
-    pull.add_argument("--target", choices=["generic"], default="generic")
+    pull.add_argument("--target", choices=["generic", "codex", "claude"], default="generic")
     pull.add_argument("--frozen", action="store_true")
     pull.add_argument("--non-interactive", action="store_true")
     pull.add_argument("--json", action="store_true", dest="json_output")
@@ -75,8 +82,29 @@ def run(
                 raise SkillDistributionError(
                     "Exactly one of skill names, --all, or --lock is required"
                 )
-            cache = args.dest.parent / "cache"
-            result = SkillInstaller(args.dest, cache).pull(
+            if args.target == "generic":
+                if args.project_root is not None:
+                    raise SkillDistributionError(
+                        "--project-root is only valid for codex and claude targets"
+                    )
+                destination = args.dest or Path(".team-agent/skills")
+                cache = destination.parent / "cache"
+            else:
+                if args.project_root is None:
+                    raise SkillDistributionError(
+                        "--project-root is required for codex and claude targets"
+                    )
+                if args.dest is not None:
+                    raise SkillDistributionError(
+                        "--dest cannot be combined with codex or claude targets"
+                    )
+                destination = harness_skill_directory(args.project_root, args.target)
+                cache = harness_cache_directory(args.project_root)
+            result = SkillInstaller(
+                destination,
+                cache,
+                project_root=args.project_root if args.target != "generic" else None,
+            ).pull(
                 client,
                 project=args.project,
                 names=args.names or None,

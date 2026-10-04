@@ -31,10 +31,46 @@ MAX_OWNERSHIP_BYTES = 1024 * 1024
 MAX_LIST_PAGES = 200
 MAX_LIST_ITEMS = 10_000
 _NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+SkillTarget = Literal["generic", "codex", "claude"]
+_HARNESS_SKILL_PATHS: dict[SkillTarget, PurePosixPath] = {
+    "generic": PurePosixPath(".team-agent/skills"),
+    "codex": PurePosixPath(".agents/skills"),
+    "claude": PurePosixPath(".claude/skills"),
+}
+_HARNESS_CACHE_PATH = PurePosixPath(".team-agent/cache")
 
 
 class SkillDistributionError(RuntimeError):
     """An actionable, safe-to-display skill distribution failure."""
+
+
+def _project_scoped_directory(project_root: Path, relative: PurePosixPath) -> Path:
+    if project_root.is_symlink() or not project_root.is_dir():
+        raise SkillDistributionError(
+            "The project root must be an existing non-symbolic-link directory"
+        )
+    current = project_root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise SkillDistributionError(
+                f"The project harness path must not contain a symbolic link: {current}"
+            )
+    return current
+
+
+def harness_skill_directory(project_root: Path, target: SkillTarget) -> Path:
+    """Resolve a fixed project-scoped harness discovery directory without following symlinks."""
+
+    if target == "generic":
+        raise SkillDistributionError("The generic target uses --dest, not --project-root")
+    return _project_scoped_directory(project_root, _HARNESS_SKILL_PATHS[target])
+
+
+def harness_cache_directory(project_root: Path) -> Path:
+    """Resolve the fixed project cache while rejecting existing or dangling symlink ancestors."""
+
+    return _project_scoped_directory(project_root, _HARNESS_CACHE_PATH)
 
 
 class PullResult(BaseModel):
@@ -109,10 +145,28 @@ class SkillClient:
         transport: httpx.BaseTransport | None = None,
         timeout: float = 30.0,
     ) -> None:
-        if not base_url or not token:
+        if not token:
             raise SkillDistributionError("Context service URL and bearer token are required")
+        try:
+            url = httpx.URL(base_url)
+        except httpx.InvalidURL as error:
+            raise SkillDistributionError(
+                "Context service URL must be a root HTTP or HTTPS service URL"
+            ) from error
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.host
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+            or url.path not in {"", "/"}
+        ):
+            raise SkillDistributionError(
+                "Context service URL must be a root HTTP or HTTPS service URL"
+            )
         self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+            base_url=str(url).rstrip("/"),
             headers={"authorization": f"Bearer {token}"},
             transport=transport,
             timeout=timeout,
@@ -421,11 +475,41 @@ def _remove_verified_directory(path: Path, files: Sequence[SkillFileManifest]) -
 
 
 class SkillInstaller:
-    """Verifies, caches, and atomically installs self-contained generic skill packages."""
+    """Verifies, caches, and atomically installs self-contained skill packages."""
 
-    def __init__(self, destination: Path, cache_directory: Path) -> None:
+    def __init__(
+        self,
+        destination: Path,
+        cache_directory: Path,
+        *,
+        project_root: Path | None = None,
+    ) -> None:
         self.destination = destination
         self.cache_directory = cache_directory
+        self.project_root = project_root
+
+    def _verify_cache_confinement(self) -> None:
+        if self.project_root is None:
+            return
+        expected = harness_cache_directory(self.project_root)
+        if self.cache_directory.absolute() != expected.absolute():
+            raise SkillDistributionError("The harness cache must remain inside the project root")
+
+    def _verify_target_paths(self, target: SkillTarget) -> None:
+        if target == "generic":
+            if self.project_root is not None:
+                raise SkillDistributionError(
+                    "A project root is only valid for codex and claude targets"
+                )
+            return
+        if self.project_root is None:
+            raise SkillDistributionError("A project root is required for codex and claude targets")
+        expected_destination = harness_skill_directory(self.project_root, target)
+        if self.destination.absolute() != expected_destination.absolute():
+            raise SkillDistributionError(
+                "The harness destination must use the target's project discovery directory"
+            )
+        self._verify_cache_confinement()
 
     def _ownership(self) -> _Ownership:
         path = self.destination / ".team-agent-ownership.json"
@@ -436,8 +520,27 @@ class SkillInstaller:
         except ValidationError as error:
             raise SkillDistributionError("The ownership manifest is invalid") from error
 
+    def _cache_package_directory(self, package_id: str) -> Path:
+        package_directory = self.cache_directory / package_id.removeprefix("sha256:")
+        if self.project_root is not None and (
+            package_directory.is_symlink()
+            or (package_directory.exists() and not package_directory.is_dir())
+        ):
+            raise SkillDistributionError(
+                f"The harness cache package path must be a directory: {package_directory}"
+            )
+        return package_directory
+
     def _cached(self, expected: SkillLockPackage) -> SkillPackageBundle | None:
-        path = self.cache_directory / expected.package_id.removeprefix("sha256:") / "bundle.json"
+        self._verify_cache_confinement()
+        package_directory = self._cache_package_directory(expected.package_id)
+        path = package_directory / "bundle.json"
+        if self.project_root is not None and (
+            path.is_symlink() or (path.exists() and not path.is_file())
+        ):
+            raise SkillDistributionError(
+                f"The harness cache bundle path must be a regular file: {path}"
+            )
         if not path.exists():
             return None
         try:
@@ -448,11 +551,9 @@ class SkillInstaller:
             return None
 
     def _cache(self, bundle: SkillPackageBundle) -> None:
-        path = (
-            self.cache_directory
-            / bundle.manifest.package_id.removeprefix("sha256:")
-            / "bundle.json"
-        )
+        self._verify_cache_confinement()
+        package_directory = self._cache_package_directory(bundle.manifest.package_id)
+        path = package_directory / "bundle.json"
         _atomic_json(path, bundle.model_dump(mode="json"))
 
     def _load_lock(self, lock_path: Path) -> SkillLock:
@@ -537,6 +638,7 @@ class SkillInstaller:
         lock: SkillLock,
         ownership: _Ownership,
     ) -> None:
+        self._verify_target_paths(lock.target)
         candidate = Path(
             tempfile.mkdtemp(
                 prefix=".team-agent-transaction-preparing-", dir=self.destination.parent
@@ -612,7 +714,7 @@ class SkillInstaller:
         all_skills: bool = False,
         lock_path: Path | None = None,
         revision: str | None = None,
-        target: Literal["generic"] = "generic",
+        target: SkillTarget = "generic",
         frozen: bool = False,
     ) -> PullResult:
         try:
@@ -644,9 +746,10 @@ class SkillInstaller:
         all_skills: bool = False,
         lock_path: Path | None = None,
         revision: str | None = None,
-        target: Literal["generic"] = "generic",
+        target: SkillTarget = "generic",
         frozen: bool = False,
     ) -> PullResult:
+        self._verify_target_paths(target)
         modes = int(names is not None) + int(all_skills) + int(lock_path is not None)
         if modes != 1:
             raise SkillDistributionError("Exactly one of skill names, --all, or --lock is required")
@@ -654,12 +757,11 @@ class SkillInstaller:
             raise SkillDistributionError("--frozen requires --lock")
         if lock_path is not None and revision is not None:
             raise SkillDistributionError("--revision cannot be combined with --lock")
-        if target != "generic":
-            raise SkillDistributionError("Only the generic target is available in this release")
-
         if self.destination.exists() and self.destination.is_symlink():
             raise SkillDistributionError("The destination must not be a symbolic link")
+        self._verify_target_paths(target)
         self.destination.mkdir(parents=True, exist_ok=True)
+        self._verify_target_paths(target)
         self._recover_transaction()
         ownership_path = self.destination / ".team-agent-ownership.json"
         output_lock = self.destination / "skills.lock.json"
@@ -707,6 +809,7 @@ class SkillInstaller:
                 ],
             )
 
+        self._verify_target_paths(target)
         for package in lock.packages:
             _validate_manifest(package)
             target_path = self.destination / package.name
@@ -719,9 +822,11 @@ class SkillInstaller:
             if target_path.exists():
                 _verify_owned_directory(target_path, ownership.packages[package.name].files)
 
+        self._verify_target_paths(target)
         staging = Path(tempfile.mkdtemp(prefix=".team-agent-stage-", dir=self.destination.parent))
         try:
             for package in lock.packages:
+                self._verify_target_paths(target)
                 bundle = self._cached(package)
                 if bundle is None:
                     try:
@@ -734,7 +839,9 @@ class SkillInstaller:
                             ) from error
                         raise
                     _verified_files(bundle, package)
+                    self._verify_target_paths(target)
                     self._cache(bundle)
+                self._verify_target_paths(target)
                 files = _verified_files(bundle, package)
                 package_stage = staging / package.name
                 package_stage.mkdir()
@@ -750,6 +857,7 @@ class SkillInstaller:
                     files=package.files,
                 )
 
+            self._verify_target_paths(target)
             self._commit(staging, lock, ownership)
             return PullResult(
                 catalog_revision=lock.catalog_revision,
