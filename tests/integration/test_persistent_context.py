@@ -69,7 +69,7 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
         )
         assert denied == []
 
-        skill_catalog = GitSkillCatalog(skills)
+        skill_catalog = GitSkillCatalog(skills, pack.revision)
         listed_skills, next_cursor = await skill_catalog.list(
             SkillListRequest(project=source_id),
             Principal(id="integration", groups=["engineering"], projects=[source_id]),

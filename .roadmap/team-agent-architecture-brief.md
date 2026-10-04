@@ -137,8 +137,10 @@ Implement a provider contract suite that checks multi-step tool calls, streamed 
 
 Canonical skill packages remain Git-owned and provider neutral. The context service scans a pinned
 checkout into memory, resolves authorized selections to immutable manifests, and serves complete
-hashed packages. The shared Python client/installer writes a frozen lock and bounded project
-projection for ADK or a coding harness. ADK's experimental types must not leak into these contracts.
+hashed self-contained packages from the current approved revision. The shared Python client/installer
+writes a snake_case frozen lock and bounded project projection for ADK or a coding harness. A runner
+stages verified packages for its job lifetime; an old lock needs a verified cache or fails without
+fallback. ADK's experimental types must not leak into these contracts.
 
 Advertise only authorized/relevant skill metadata; load full bodies and resources on demand. Record the revision used for a run. Keep discovery and resource reading separate from script execution. Scripts requiring repository access execute inside coding runners. Do not enable general script execution in the hosted coordinator merely because a skill contains scripts.
 

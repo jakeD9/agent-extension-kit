@@ -1,9 +1,11 @@
+import base64
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from team_agent_auth import StaticBearerAuthenticator
-from team_agent_contracts import Principal
+from team_agent_contracts import Principal, SkillPackageResponse, SkillResolveResponse
 from team_context_service import AppDependencies, build_app, load_content_pack
 
 EXTENSION_PATH = Path(__file__).parents[3] / "extension"
@@ -37,7 +39,7 @@ def test_returns_cited_knowledge_to_authorized_caller(client: TestClient) -> Non
         "revision": "fixture-revision",
         "heading": "Stable event identity",
     }
-    assert response.headers["x-request-id"] == response.json()["requestId"]
+    assert response.headers["x-request-id"] == response.json()["request_id"]
 
 
 def test_lists_authorized_skill_metadata_without_body(client: TestClient) -> None:
@@ -55,8 +57,8 @@ def test_lists_authorized_skill_metadata_without_body(client: TestClient) -> Non
             ),
             "version": "1",
             "projects": ["event-ingestion"],
-            "accessGroups": ["engineering"],
-            "allowedTools": ["search_team_knowledge", "get_team_document"],
+            "access_groups": ["engineering"],
+            "allowed_tools": ["search_team_knowledge", "get_team_document"],
             "citation": {
                 "repository": "agent-extension-kit-sample",
                 "path": "skills/diagnose-and-fix/SKILL.md",
@@ -65,12 +67,12 @@ def test_lists_authorized_skill_metadata_without_body(client: TestClient) -> Non
         }
     ]
     assert "body" not in response.json()["items"][0]
-    assert response.headers["x-request-id"] == response.json()["requestId"]
+    assert response.headers["x-request-id"] == response.json()["request_id"]
 
 
 def test_loads_authorized_skill_body_with_revision_provenance(client: TestClient) -> None:
     response = client.get(
-        "/v1/skills/diagnose-and-fix?project=event-ingestion",
+        "/v1/skills/diagnose-and-fix?project=event-ingestion&revision=fixture-revision",
         headers={"authorization": "Bearer engineering-token"},
     )
 
@@ -81,6 +83,167 @@ def test_loads_authorized_skill_body_with_revision_provenance(client: TestClient
         "path": "skills/diagnose-and-fix/SKILL.md",
         "revision": "fixture-revision",
     }
+
+
+def test_resolves_and_downloads_exact_immutable_skill_package(client: TestClient) -> None:
+    resolved = client.post(
+        "/v1/skills:resolve",
+        headers={"authorization": "Bearer engineering-token"},
+        json={
+            "project": "event-ingestion",
+            "names": ["diagnose-and-fix"],
+            "revision": "fixture-revision",
+        },
+    )
+
+    assert resolved.status_code == 200
+    manifest = resolved.json()["manifest"]
+    assert manifest["catalog_revision"] == "fixture-revision"
+    assert manifest["selected_names"] == ["diagnose-and-fix"]
+    assert [package["name"] for package in manifest["packages"]] == ["diagnose-and-fix"]
+    package = manifest["packages"][0]
+    assert package["package_id"].startswith("sha256:")
+    assert package["files"][0]["path"] == "SKILL.md"
+
+    downloaded = client.get(
+        f"/v1/skill-packages/{package['package_id']}?project=event-ingestion",
+        headers={"authorization": "Bearer engineering-token"},
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.json()["manifest"] == package
+    assert base64.b64decode(downloaded.json()["files"][0]["content_base64"]).startswith(b"---\n")
+    resolved_contract = SkillResolveResponse.model_validate_json(resolved.text)
+    package_contract = SkillPackageResponse.model_validate_json(downloaded.text)
+    assert resolved_contract.model_dump(mode="json", exclude_none=True) == resolved.json()
+    assert package_contract.model_dump(mode="json", exclude_none=True) == downloaded.json()
+    unsupported = resolved.json()
+    unsupported["manifest"]["schema_version"] = "2"
+    with pytest.raises(ValidationError):
+        SkillResolveResponse.model_validate(unsupported)
+    empty_revision = resolved.json()
+    empty_revision["manifest"]["catalog_revision"] = ""
+    with pytest.raises(ValidationError):
+        SkillResolveResponse.model_validate(empty_revision)
+
+
+def test_exact_unavailable_skill_revision_never_falls_forward(client: TestClient) -> None:
+    response = client.get(
+        "/v1/skills/diagnose-and-fix?project=event-ingestion&revision=missing-revision",
+        headers={"authorization": "Bearer engineering-token"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "skill_revision_not_found"
+
+
+def test_unauthorized_skill_name_does_not_reveal_revision_availability(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/v1/skills:resolve",
+        headers={"authorization": "Bearer outsider-token"},
+        json={
+            "project": "other",
+            "names": ["diagnose-and-fix"],
+            "revision": "missing-revision",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "skill_not_found"
+
+
+def test_resolve_all_is_scoped_and_records_explicit_roots(client: TestClient) -> None:
+    response = client.post(
+        "/v1/skills:resolve",
+        headers={"authorization": "Bearer engineering-token"},
+        json={"project": "event-ingestion", "all": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["manifest"]["selected_names"] == ["diagnose-and-fix"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"project": "event-ingestion"},
+        {"project": "event-ingestion", "names": ["diagnose-and-fix"], "all": True},
+        {"project": "event-ingestion", "names": ["Not Safe"]},
+        {"project": "event-ingestion", "names": [f"skill-{index}" for index in range(101)]},
+    ],
+)
+def test_rejects_invalid_skill_resolution_selections(
+    client: TestClient, body: dict[str, object]
+) -> None:
+    response = client.post(
+        "/v1/skills:resolve",
+        headers={"authorization": "Bearer engineering-token"},
+        json=body,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_failed"
+
+
+def test_resolve_requires_authentication_before_body_validation(client: TestClient) -> None:
+    response = client.post("/v1/skills:resolve", json={})
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_resolve_fails_when_exact_revision_or_named_skill_is_unavailable(
+    client: TestClient,
+) -> None:
+    missing_revision = client.post(
+        "/v1/skills:resolve",
+        headers={"authorization": "Bearer engineering-token"},
+        json={
+            "project": "event-ingestion",
+            "names": ["diagnose-and-fix"],
+            "revision": "missing",
+        },
+    )
+    missing_skill = client.post(
+        "/v1/skills:resolve",
+        headers={"authorization": "Bearer engineering-token"},
+        json={"project": "event-ingestion", "names": ["not-present"]},
+    )
+
+    assert missing_revision.status_code == 404
+    assert missing_revision.json()["error"]["code"] == "skill_revision_not_found"
+    assert missing_skill.status_code == 404
+    assert missing_skill.json()["error"]["code"] == "skill_not_found"
+
+
+def test_package_lookup_does_not_leak_across_authorization_scopes(client: TestClient) -> None:
+    resolved = client.post(
+        "/v1/skills:resolve",
+        headers={"authorization": "Bearer engineering-token"},
+        json={"project": "event-ingestion", "all": True},
+    ).json()
+    package_id = resolved["manifest"]["packages"][0]["package_id"]
+
+    unauthorized = client.get(
+        f"/v1/skill-packages/{package_id}?project=other",
+        headers={"authorization": "Bearer outsider-token"},
+    )
+    missing = client.get(
+        f"/v1/skill-packages/sha256:{'0' * 64}?project=other",
+        headers={"authorization": "Bearer outsider-token"},
+    )
+
+    assert unauthorized.status_code == missing.status_code == 404
+    assert unauthorized.json()["error"]["code"] == "skill_package_not_found"
+    assert unauthorized.json()["error"]["message"] == missing.json()["error"]["message"]
+
+
+def test_package_lookup_requires_authentication_before_validation(client: TestClient) -> None:
+    response = client.get("/v1/skill-packages/not-a-package")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
 
 
 def test_skill_lookup_does_not_leak_names_across_authorization_scopes(
@@ -115,7 +278,7 @@ def test_rejects_invalid_skill_requests_with_canonical_error(client: TestClient,
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_failed"
-    assert response.headers["x-request-id"] == response.json()["error"]["requestId"]
+    assert response.headers["x-request-id"] == response.json()["error"]["request_id"]
 
 
 def test_skill_endpoints_require_bearer_authentication(client: TestClient) -> None:
@@ -176,7 +339,7 @@ def test_uses_canonical_error_for_invalid_authentication(client: TestClient) -> 
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthorized"
-    assert isinstance(response.json()["error"]["requestId"], str)
+    assert isinstance(response.json()["error"]["request_id"], str)
 
 
 def test_rejects_invalid_authenticated_request(client: TestClient) -> None:
@@ -196,7 +359,7 @@ def test_health_and_readiness_report_loaded_pack(client: TestClient) -> None:
     assert ready.status_code == 200
     assert ready.json() == {
         "status": "ready",
-        "contentPack": "agent-extension-kit-sample",
+        "content_pack": "agent-extension-kit-sample",
         "chunks": 3,
     }
 

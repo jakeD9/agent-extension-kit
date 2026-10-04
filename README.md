@@ -5,10 +5,11 @@ governed memory, and narrowly scoped tools. Genkit Python will coordinate hosted
 initial OpenAI model path, while the extension kit remains usable by local Codex and Claude clients
 without Genkit or database credentials.
 
-The migration is intentionally incremental. The current S03 implementation provides authenticated,
+The migration is intentionally incremental. The current S04 implementation provides authenticated,
 revision-pinned MongoDB knowledge search plus authorized skill discovery/loading from a pinned
-Git/filesystem catalog held in service memory. Immutable package resolution, the pull CLI, MCP,
-Genkit orchestration, coding runners, Slack, and automations arrive in later roadmap slices.
+Git/filesystem catalog held in service memory, including immutable package resolution and exact
+package downloads. The pull CLI, MCP, Genkit orchestration, coding runners, Slack, and automations
+arrive in later roadmap slices.
 
 ## Quick start
 

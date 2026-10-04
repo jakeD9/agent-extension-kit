@@ -39,13 +39,29 @@ team-agent skills pull --lock /job/input/skills.lock.json \
 
 These commands are proposed application interfaces, not Genkit built-ins. Use the same Python SkillClient/SkillInstaller underneath the CLI and executor, so services need not spawn a CLI subprocess.
 
-Exactly one selection mode is required: named skills, `--all`, or `--lock`. `--revision` optionally selects an available immutable Git revision; without it, resolve the currently approved catalog once per pull. `--all` means the full authorized catalog for the supplied scope, not every company skill. It does not automatically enable every downloaded skill for every agent.
+Exactly one selection mode is required: named skills, `--all`, or `--lock`. `--revision`
+optionally requires the exact currently approved Git revision; the service does not browse history.
+Without it, resolve the current catalog once per pull. `--all` means the full authorized catalog for
+the supplied scope, not every company skill. It does not automatically enable every downloaded skill
+for every agent.
 
-`skills:resolve` accepts a selection and project scope and returns a manifest pinned to an immutable catalog revision. Entries include skill name, package ID, source revision, file hashes, description, resource inventory, dependencies, and schema version. Package endpoints serve those exact revisions. Authentication and scope enforcement use the context service, and no client receives MongoDB credentials.
+`skills:resolve` accepts a selection and project scope and returns a manifest pinned to the currently
+approved catalog revision. Entries include skill name, package ID, source revision, file hashes,
+description, resource inventory, and schema version. Packages are self-contained; v1 has no
+skill-to-skill dependency graph. Python REST, JSON, and lockfile fields use `snake_case`. Package
+endpoints serve the exact current revision. Authentication and scope enforcement use the context
+service, and no client receives MongoDB credentials.
 
-Download the full selected package, including references and scripts. Resolve declared skill dependencies with cycle detection and the same access checks. Fetch into a temporary directory, validate hashes and safe relative paths, and atomically install each package. Do not execute downloaded scripts during installation.
+Download the full selected package, including references and scripts. Fetch into a temporary
+directory, validate hashes and safe relative paths, and atomically install each package. Do not
+execute downloaded scripts during installation.
 
-Write `skills.lock.json` beside the installed catalog with selected package identities and hashes. `--frozen` uses only the supplied lock, rejects missing or mismatched packages, and never substitutes latest. Retain immutable packages for the supported job/retry lifetime. A valid local cache may satisfy a locked pull; unverified or missing data is an error.
+Write `skills.lock.json` beside the installed catalog with selected package identities and hashes.
+`--frozen` uses only the supplied lock, rejects missing or mismatched packages, and never substitutes
+latest. The context service serves only its current approved revision and does not promise historical
+package retention. A coding job stages verified packages during bootstrap and keeps them for that
+job's lifetime. A frozen lock may use a verified local or job cache; if neither the cache nor current
+service can supply the exact package, the pull fails.
 
 Default pulls update CLI-managed packages only. Preserve user-authored files and unselected packages. Keep an ownership manifest and reject collisions with unmanaged files. An explicit future `--prune` option may remove only owned packages excluded from the resolved selection. Fail nonzero with actionable errors; support `--json` output for automation, and keep credentials out of arguments and manifests.
 
@@ -63,7 +79,11 @@ Default pulls update CLI-managed packages only. Preserve user-authored files and
 | Automation | Declares skill names; resolves them when creating each workflow run |
 | CLI/offline development | Uses installed packages and a verified lock/cache |
 
-An automation definition may pin a catalog revision or use the latest approved revision at run creation. Every run then freezes its own lock, and retries reuse that lock. Automations invoke the shared Python resolution service; their runners use the same pull command.
+An automation definition may request a catalog revision or use the current approved revision at run
+creation. Every run freezes its own lock. A retry within the same staged job reuses its packages; a
+new job may use a verified cache for that lock, otherwise an unavailable old revision fails rather
+than substituting current content. Later jobs without a lock resolve the then-current catalog.
+Automations invoke the shared Python resolution service; their runners use the same pull command.
 
 Only one component needs to download packages for each coding job: either the executor stages a verified bundle or the runner pulls its locked packages at startup. Prefer runner bootstrap when it has context-service access; use executor staging in network-restricted environments. Required skills must be installed successfully before coding starts. The runner bootstrap selects the harness target or invokes the corresponding installer before harness launch.
 
@@ -74,11 +94,13 @@ For EKS, this bootstrap can run in the runner entrypoint or an init container wi
 | Endpoint | Purpose |
 |---|---|
 | `GET /v1/skills` | List authorized skill metadata |
-| `GET /v1/skills/{name}` | Load skill instructions at a requested available revision |
+| `GET /v1/skills/{name}` | Load skill instructions at the current revision, optionally requiring that exact revision |
 | `POST /v1/skills:resolve` | Resolve named/all selection to an immutable package manifest |
 | `GET /v1/skill-packages/{package_id}` | Download the exact authorized package |
 
-Immutable package IDs do not bypass authorization. Preserve historical packages for active jobs and supported retries. If a required revision is unavailable, report failure instead of substituting newer content.
+Immutable package IDs do not bypass authorization. The service retains no historical-package
+guarantee. If a required revision is unavailable from the current service and verified cache, report
+failure instead of substituting newer content.
 
 ## Implementation changes
 
@@ -87,7 +109,7 @@ Immutable package IDs do not bypass authorization. Preserve historical packages 
 3. Add Python `SkillClient`, `SkillInstaller`, and versioned lock/manifest contracts.
 4. Implement `team-agent skills list` and `team-agent skills pull`, including selection, destination, revision, target, frozen, non-interactive, and JSON-output options.
 5. Add executor resolution and runner bootstrap installation before harness launch. Persist the skill lock in the coding job's inputs.
-6. Add named skill selections and optional pinned catalog revisions to automation definitions.
+6. Add named skill selections and optional required exact catalog revisions to automation definitions.
 7. Add project-scoped Codex and Claude installation adapters; verify actual harness discovery for pinned versions.
 8. Remove any mandatory MongoDB skill-catalog collection or synchronization requirement. Keep run records of skill identities, revisions, and hashes for provenance.
 
@@ -95,13 +117,13 @@ Do not require Genkit-specific types in these interfaces. The same skill distrib
 
 ## Acceptance criteria
 
-- A targeted pull installs only selected packages and their authorized declared dependencies.
+- A targeted pull installs only selected self-contained packages.
 - An all pull returns only the caller's authorized project catalog.
 - Full packages include referenced resources and scripts; installation executes no scripts.
 - Interrupted or invalid downloads do not replace a valid installed package.
-- Hash mismatch, unsafe paths, dependency cycles, unavailable revisions, and unmanaged-file collisions fail clearly.
-- Frozen pulls reproduce the locked packages and never resolve latest.
-- An automation retry uses the original run's lock even after a new skill deployment.
+- Hash mismatch, unsafe paths, unavailable revisions, and unmanaged-file collisions fail clearly.
+- Frozen pulls reproduce exact locked packages from the current service or a verified cache and never resolve latest.
+- A retry uses its staged packages or a verified cache; an unavailable frozen package fails without fallback.
 - Required skill installation failure prevents coding-harness startup.
 - Project-scoped Codex and Claude adapters pass discovery fixtures and live integration checks when the harness is available.
 - Genkit tools, the CLI, and runner bootstrap enforce the same access rules.

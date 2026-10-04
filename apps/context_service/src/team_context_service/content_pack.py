@@ -1,9 +1,19 @@
-from pathlib import Path
+import base64
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
-from team_agent_contracts import Authority, Citation
+from team_agent_contracts import (
+    Authority,
+    Citation,
+    ImmutableSkillPackageManifest,
+    SkillFileManifest,
+    SkillPackageBundle,
+    SkillPackageFile,
+)
 from team_context_core import KnowledgeChunk, SkillPackage
 
 
@@ -59,10 +69,12 @@ class SkillMetadata(BaseModel):
     projects: list[str] = Field(min_length=1)
     access_groups: list[str] = Field(min_length=1)
     allowed_tools: list[str] = Field(default_factory=list)
+    resources: list[str] = Field(default_factory=list)
 
 
 class ContentPack(BaseModel):
     manifest: ExtensionManifest
+    revision: str = Field(min_length=1)
     chunks: list[KnowledgeChunk]
     skills: list[SkillPackage]
 
@@ -72,7 +84,10 @@ def _read_yaml(path: Path) -> Any:
 
 
 def _read_markdown(path: Path) -> tuple[dict[str, Any], str]:
-    text = path.read_text(encoding="utf-8")
+    return _parse_markdown(path.read_text(encoding="utf-8"), path)
+
+
+def _parse_markdown(text: str, path: Path) -> tuple[dict[str, Any], str]:
     if not text.startswith("---\n"):
         raise ValueError(f"Markdown file has no YAML frontmatter: {path}")
     try:
@@ -90,6 +105,111 @@ def _safe_child(root: Path, relative: str) -> Path:
     if not child.is_relative_to(root):
         raise ValueError(f"Content root escapes the extension directory: {relative}")
     return child
+
+
+MAX_SKILL_FILES = 128
+MAX_SKILL_FILE_BYTES = 2 * 1024 * 1024
+MAX_SKILL_PACKAGE_BYTES = 10 * 1024 * 1024
+
+
+def _read_bounded_skill_file(path: Path) -> bytes:
+    if path.stat().st_size > MAX_SKILL_FILE_BYTES:
+        raise ValueError(f"Skill package file exceeds the size limit: {path.name}")
+    content = bytearray()
+    with path.open("rb") as stream:
+        while chunk := stream.read(64 * 1024):
+            content.extend(chunk)
+            if len(content) > MAX_SKILL_FILE_BYTES:
+                raise ValueError(f"Skill package file exceeds the size limit: {path.name}")
+    return bytes(content)
+
+
+def _safe_package_path(package_root: Path, relative: str) -> Path:
+    posix = PurePosixPath(relative)
+    if posix.is_absolute() or not posix.parts or ".." in posix.parts or "." in posix.parts:
+        raise ValueError(f"Unsafe skill package path: {relative}")
+    path = package_root.joinpath(*posix.parts)
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(package_root):
+        raise ValueError(f"Invalid skill package resource: {relative}")
+    return path
+
+
+def _build_skill_bundle(
+    package_root: Path,
+    skill_document: bytes,
+    metadata: SkillMetadata,
+    repository: str,
+    citation_path: str,
+    revision: str,
+) -> tuple[ImmutableSkillPackageManifest, SkillPackageBundle]:
+    if len(set(metadata.resources)) != len(metadata.resources):
+        raise ValueError(f"Skill {metadata.name} has duplicate resources")
+    for resource in metadata.resources:
+        _safe_package_path(package_root, resource)
+
+    paths: list[Path] = []
+    for path in sorted(package_root.rglob("*")):
+        if path.is_symlink():
+            raise ValueError(f"Skill package cannot contain symlinks: {path}")
+        if path.is_file():
+            paths.append(path)
+    if len(paths) > MAX_SKILL_FILES:
+        raise ValueError(f"Skill {metadata.name} exceeds the file count limit")
+
+    manifests: list[SkillFileManifest] = []
+    bundle_files: list[SkillPackageFile] = []
+    total_size = 0
+    for path in paths:
+        content = (
+            skill_document if path.name == "SKILL.md" and path.parent == package_root else None
+        )
+        if content is None:
+            content = _read_bounded_skill_file(path)
+        size = len(content)
+        total_size += size
+        if total_size > MAX_SKILL_PACKAGE_BYTES:
+            raise ValueError(f"Skill {metadata.name} exceeds the package size limit")
+        relative = path.relative_to(package_root).as_posix()
+        digest = hashlib.sha256(content).hexdigest()
+        manifests.append(SkillFileManifest(path=relative, sha256=digest, size=size))
+        bundle_files.append(
+            SkillPackageFile(
+                path=relative,
+                sha256=digest,
+                size=size,
+                content_base64=base64.b64encode(content).decode("ascii"),
+            )
+        )
+    if (not manifests or manifests[0].path != "SKILL.md") and not any(
+        item.path == "SKILL.md" for item in manifests
+    ):
+        raise ValueError(f"Skill {metadata.name} has no SKILL.md")
+
+    identity = json.dumps(
+        {
+            "repository": repository,
+            "source_revision": revision,
+            "name": metadata.name,
+            "version": metadata.version,
+            "files": [
+                {"path": item.path, "sha256": item.sha256, "size": item.size} for item in manifests
+            ],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    package_id = f"sha256:{hashlib.sha256(identity).hexdigest()}"
+    manifest = ImmutableSkillPackageManifest(
+        package_id=package_id,
+        name=metadata.name,
+        description=metadata.description,
+        version=metadata.version,
+        source_revision=revision,
+        files=manifests,
+        resources=metadata.resources,
+        citation=Citation(repository=repository, path=citation_path, revision=revision),
+    )
+    return manifest, SkillPackageBundle(manifest=manifest, files=bundle_files)
 
 
 def load_content_pack(root: Path, revision: str) -> ContentPack:
@@ -135,8 +255,16 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
     for configured_root in configured_skill_roots:
         skill_root = _safe_child(resolved_root, configured_root)
         for path in sorted(skill_root.rglob("SKILL.md")):
-            metadata_raw, body = _read_markdown(path)
+            if path.is_symlink():
+                raise ValueError(f"Skill package cannot contain symlinks: {path}")
+            skill_document = _read_bounded_skill_file(path)
+            metadata_raw, body = _parse_markdown(skill_document.decode("utf-8"), path)
             skill_metadata = SkillMetadata.model_validate(metadata_raw)
+            if path.parent.parent != skill_root or path.parent.name != skill_metadata.name:
+                raise ValueError(
+                    f"Skill {skill_metadata.name} must use a direct package directory "
+                    "with the same name"
+                )
             for project in skill_metadata.projects:
                 if project not in manifest_projects:
                     raise ValueError(
@@ -152,9 +280,17 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
                 raise ValueError(f"Duplicate skill name: {skill_metadata.name}")
             skill_names.add(skill_metadata.name)
             relative_path = path.relative_to(resolved_root).as_posix()
+            package_manifest, bundle = _build_skill_bundle(
+                path.parent,
+                skill_document,
+                skill_metadata,
+                manifest.repository,
+                relative_path,
+                revision,
+            )
             skills.append(
                 SkillPackage(
-                    id=f"{manifest.id}:{relative_path}",
+                    id=package_manifest.package_id,
                     name=skill_metadata.name,
                     description=skill_metadata.description,
                     version=skill_metadata.version,
@@ -167,9 +303,11 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
                         path=relative_path,
                         revision=revision,
                     ),
+                    package_manifest=package_manifest,
+                    bundle=bundle,
                 )
             )
-    return ContentPack(manifest=manifest, chunks=chunks, skills=skills)
+    return ContentPack(manifest=manifest, revision=revision, chunks=chunks, skills=skills)
 
 
 __all__ = ["ContentPack", "ExtensionManifest", "load_content_pack"]

@@ -58,3 +58,9 @@ superseded S03 design may retain an unused legacy `skills` collection until an o
 the service no longer creates, queries, synchronizes, or requires that collection. The v3 migration
 upgrades every historical source-revision row and removes its obsolete `skill_count` field before
 recording the migration.
+
+Immutable package manifests and bundles are likewise derived in memory from the pinned checkout.
+Their content IDs bind repository and source-revision provenance, package metadata, and the complete
+sorted file inventory. The service serves the current approved revision only. Later runtime/job
+records persist snake_case locks and stage verified packages for a job lifetime; an unavailable old
+package requires a verified cache or fails rather than selecting current content.

@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -20,6 +21,10 @@ from team_agent_contracts import (
     SkillGetResponse,
     SkillListRequest,
     SkillListResponse,
+    SkillPackageGetRequest,
+    SkillPackageResponse,
+    SkillResolveRequest,
+    SkillResolveResponse,
 )
 from team_context_core import (
     GitSkillCatalog,
@@ -27,6 +32,8 @@ from team_context_core import (
     InvalidSkillCursor,
     KnowledgeIndex,
     SkillCatalog,
+    SkillNotFoundError,
+    SkillRevisionNotFoundError,
 )
 
 from team_context_service.content_pack import ContentPack
@@ -48,9 +55,7 @@ class AppDependencies:
 
 def _error(code: str, message: str, request_id: str, status_code: int) -> JSONResponse:
     response = ErrorResponse(error=ErrorDetail(code=code, message=message, request_id=request_id))
-    return JSONResponse(
-        status_code=status_code, content=response.model_dump(by_alias=True, exclude_none=True)
-    )
+    return JSONResponse(status_code=status_code, content=response.model_dump(exclude_none=True))
 
 
 def build_app(dependencies: AppDependencies) -> FastAPI:
@@ -66,7 +71,9 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
 
     app = FastAPI(title="Team Context Service", version="0.2.0", lifespan=lifespan)
     index = dependencies.knowledge_index or InMemoryKnowledgeIndex(dependencies.pack.chunks)
-    skills = dependencies.skill_catalog or GitSkillCatalog(dependencies.pack.skills)
+    skills = dependencies.skill_catalog or GitSkillCatalog(
+        dependencies.pack.skills, dependencies.pack.revision
+    )
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -104,7 +111,7 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             status, details = await dependencies.readiness()
         body: dict[str, object] = {
             "status": status,
-            "contentPack": dependencies.pack.manifest.id,
+            "content_pack": dependencies.pack.manifest.id,
             "chunks": len(dependencies.pack.chunks),
         }
         if details is not None:
@@ -136,9 +143,7 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             )
         results = await index.search(search_request, principal)
         response = KnowledgeSearchResponse(results=results, request_id=request.state.request_id)
-        return JSONResponse(
-            content=response.model_dump(by_alias=True, mode="json", exclude_none=True)
-        )
+        return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
 
     @app.get("/v1/skills")
     async def list_skills(
@@ -166,9 +171,44 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
         response = SkillListResponse(
             items=items, next_cursor=next_cursor, request_id=request.state.request_id
         )
-        return JSONResponse(
-            content=response.model_dump(by_alias=True, mode="json", exclude_none=True)
-        )
+        return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
+
+    @app.post("/v1/skills:resolve")
+    async def resolve_skills(
+        body: Annotated[object, Body()],
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> JSONResponse:
+        principal = await dependencies.authenticator.authenticate(authorization)
+        if principal is None:
+            return _error(
+                "unauthorized",
+                "A valid bearer token is required",
+                request.state.request_id,
+                401,
+            )
+        try:
+            resolve_request = SkillResolveRequest.model_validate(body)
+        except ValidationError:
+            return _error(
+                "validation_failed",
+                "The skill resolution request is invalid",
+                request.state.request_id,
+                422,
+            )
+        try:
+            manifest = await skills.resolve(resolve_request, principal)
+        except SkillRevisionNotFoundError:
+            return _error(
+                "skill_revision_not_found",
+                "Skill revision not found",
+                request.state.request_id,
+                404,
+            )
+        except SkillNotFoundError:
+            return _error("skill_not_found", "Skill not found", request.state.request_id, 404)
+        response = SkillResolveResponse(manifest=manifest, request_id=request.state.request_id)
+        return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
 
     @app.get("/v1/skills/{name}")
     async def get_skill(
@@ -193,13 +233,60 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
                 request.state.request_id,
                 422,
             )
-        skill = await skills.get(name, get_request.project, principal)
+        try:
+            skill = await skills.get(name, get_request.project, principal, get_request.revision)
+        except SkillRevisionNotFoundError:
+            return _error(
+                "skill_revision_not_found",
+                "Skill revision not found",
+                request.state.request_id,
+                404,
+            )
         if skill is None:
             return _error("skill_not_found", "Skill not found", request.state.request_id, 404)
         response = SkillGetResponse(**skill.model_dump(), request_id=request.state.request_id)
-        return JSONResponse(
-            content=response.model_dump(by_alias=True, mode="json", exclude_none=True)
-        )
+        return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
+
+    @app.get("/v1/skill-packages/{package_id}")
+    async def get_skill_package(
+        package_id: str,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> JSONResponse:
+        principal = await dependencies.authenticator.authenticate(authorization)
+        if principal is None:
+            return _error(
+                "unauthorized",
+                "A valid bearer token is required",
+                request.state.request_id,
+                401,
+            )
+        try:
+            get_request = SkillPackageGetRequest.model_validate(dict(request.query_params))
+        except ValidationError:
+            return _error(
+                "validation_failed",
+                "The skill package request is invalid",
+                request.state.request_id,
+                422,
+            )
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", package_id) is None:
+            return _error(
+                "validation_failed",
+                "The skill package request is invalid",
+                request.state.request_id,
+                422,
+            )
+        bundle = await skills.get_package(package_id, get_request.project, principal)
+        if bundle is None:
+            return _error(
+                "skill_package_not_found",
+                "Skill package not found",
+                request.state.request_id,
+                404,
+            )
+        response = SkillPackageResponse(**bundle.model_dump(), request_id=request.state.request_id)
+        return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
 
     return app
 

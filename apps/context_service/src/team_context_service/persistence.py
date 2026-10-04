@@ -51,11 +51,7 @@ class MongoContextBackend:
 
     @property
     def _revision(self) -> str:
-        revisions = {chunk.citation.revision for chunk in self._pack.chunks}
-        revisions.update(skill.citation.revision for skill in self._pack.skills)
-        if len(revisions) != 1:
-            raise ValueError("A content pack must contain exactly one pinned revision")
-        return next(iter(revisions))
+        return self._pack.revision
 
     async def _initialize(self) -> None:
         async with self._initialization_lock:
@@ -83,7 +79,7 @@ class MongoContextBackend:
         if not self._initialized:
             return "not_ready", {
                 "mongodb": "unavailable",
-                "sourceRevision": self._revision,
+                "source_revision": self._revision,
             }
         try:
             await self._database.command({"ping": 1})
@@ -97,14 +93,14 @@ class MongoContextBackend:
         except Exception:
             return "not_ready", {
                 "mongodb": "unavailable",
-                "sourceRevision": self._revision,
+                "source_revision": self._revision,
             }
         if revision is None or revision.get("chunk_count") != len(self._pack.chunks):
             return "not_ready", {
                 "mongodb": "ready",
-                "sourceRevision": "not_ready",
+                "source_revision": "not_ready",
             }
-        return "ready", {"mongodb": "ready", "sourceRevision": self._revision}
+        return "ready", {"mongodb": "ready", "source_revision": self._revision}
 
     async def shutdown(self) -> None:
         await self._client.close()

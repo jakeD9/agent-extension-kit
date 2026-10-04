@@ -43,7 +43,7 @@ def create_app_from_env() -> FastAPI:
     knowledge_index = MongoKnowledgeIndex(
         cast(KnowledgeChunkCollection, database["document_chunks"])
     )
-    skill_catalog = GitSkillCatalog(pack.skills)
+    skill_catalog = GitSkillCatalog(pack.skills, pack.revision)
     return build_app(
         AppDependencies(
             pack=pack,

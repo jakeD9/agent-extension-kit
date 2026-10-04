@@ -10,8 +10,8 @@ brief and the workstream artifacts under `.roadmap/workstreams/` supply fresh-se
   > After this: cited retrieval survives restart and the context service cannot access runtime collections.
 - [x] **S03: Authorized skill-catalog tracer** `risk:medium` `depends:[S02]`
   > After this: authenticated REST callers can list and load only authorized skills scanned from the pinned Git content pack, without a MongoDB skill catalog.
-- [ ] **S04: Immutable skill resolution and package API** `risk:high` `depends:[S03]`
-  > After this: authorized callers can resolve named/all selections to a hashed immutable manifest and download exact dependency-closed packages.
+- [x] **S04: Immutable skill resolution and package API** `risk:high` `depends:[S03]`
+  > After this: authorized callers can resolve named/all selections to a hashed immutable manifest and download exact self-contained packages from the current approved revision.
 - [ ] **S05: Verified skill pull and lockfile CLI** `risk:high` `depends:[S04]`
   > After this: local users and automations can atomically install targeted, authorized packages and reproduce them from a frozen lock.
 - [ ] **S06: Local MCP and harness parity** `risk:medium` `depends:[S05]`

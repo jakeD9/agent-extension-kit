@@ -69,6 +69,24 @@ def test_backend_initializes_checks_revision_and_closes_client() -> None:
         3,
     )
     assert status == "ready"
-    assert details == {"mongodb": "ready", "sourceRevision": "fixture-revision"}
+    assert details == {"mongodb": "ready", "source_revision": "fixture-revision"}
     assert database.commands == [{"ping": 1}, {"ping": 1}]
     assert client.closed is True
+
+
+def test_backend_uses_explicit_revision_for_an_empty_content_pack() -> None:
+    client = _Client()
+    database = _Database()
+    repository = _Repository()
+    pack = load_content_pack(EXTENSION_PATH, "fixture-revision").model_copy(
+        update={"revision": "empty-revision", "chunks": [], "skills": []}
+    )
+    backend = MongoContextBackend(client, database, repository, pack)
+
+    asyncio.run(backend.startup())
+
+    assert repository.synchronized == (
+        "agent-extension-kit-sample",
+        "empty-revision",
+        0,
+    )

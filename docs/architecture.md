@@ -7,11 +7,11 @@ that context globally available or embedding authorization in prompts. Genkit Py
 hosted orchestration runtime, initially through an explicit OpenAI model configuration; local Codex
 and Claude integrations remain independent of Genkit.
 
-Migration proceeds as verified vertical slices. The current implementation is S03: a Python context
+Migration proceeds as verified vertical slices. The current implementation is S04: a Python context
 service that validates a Git-owned extension pack, synchronizes only its knowledge index at a pinned
 revision into MongoDB, builds its skill catalog in memory, and provides authenticated cited search
-plus authorized skill list/get operations. Package resolution/pull, CLI/MCP, Genkit, coding jobs,
-Slack, and automation are not yet implemented.
+plus authorized skill list/get, immutable resolution, and exact package-download operations. The pull
+CLI/MCP, Genkit, coding jobs, Slack, and automation are not yet implemented.
 
 ## Runtime boundaries
 
@@ -52,9 +52,14 @@ cannot grant tool authority.
 Skill metadata must reference projects and access groups declared by the extension manifest. The Git
 skill catalog is bound to the configured extension checkout, and project/group authorization is
 applied before pagination and body retrieval. Absent and unauthorized names share one not-found
-response. Skill bodies retain repository/path/revision provenance. Complete-package resolution,
-hashing, dependency closure, lockfiles, and atomic installation are specified by the skills
-distribution addendum and begin in S04; they are not Genkit built-ins.
+response. Skill bodies retain repository/path/revision provenance. The loader recursively inventories
+bounded self-contained packages, rejects symlinks and unsafe or missing explicit resources, hashes
+raw file bytes with bounded streaming reads, and derives provenance-bound content IDs. Resolution
+authorizes names before revision errors and serves only the current catalog without substituting
+another revision. Jobs later stage verified packages during bootstrap for their lifetime; an old
+frozen lock requires a verified cache or fails. Lockfiles and atomic installation follow in later
+distribution slices; none of these interfaces are Genkit built-ins. Python JSON contracts use
+snake_case.
 
 REST is the primary context interface. MCP and CLI will adapt the same application services and
 policy decisions. Genkit-specific types stay inside `runtime_genkit`.

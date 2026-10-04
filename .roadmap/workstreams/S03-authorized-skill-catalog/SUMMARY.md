@@ -26,7 +26,7 @@
 
 ## S04 inputs and constraints
 
-- Extend the Git catalog with immutable resolution, complete-package inventory, dependencies, and
+- Extend the Git catalog with immutable resolution and complete self-contained package inventory and
   hashes before implementing installation.
 - Keep package IDs subject to the same authorization checks as list/get; do not treat possession of
   an identifier as authority.

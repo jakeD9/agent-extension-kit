@@ -177,12 +177,15 @@ Provider contract tests cover multi-step tools, structured output with tools, st
 Canonical skills remain Git-owned and provider neutral. The context service scans validated packages
 from one pinned checkout into an in-memory discovery catalog; MongoDB is not required for skill
 discovery or download. Each package includes trigger metadata, prerequisites, procedure, constraints,
-evidence requirements, completion criteria, declared dependencies, and a complete resource inventory.
+evidence requirements, completion criteria, and a complete resource inventory. V1 skill packages are
+self-contained and do not declare skill-to-skill dependencies.
 
 The shared Python `SkillClient` resolves caller authorization and named/all selections to a versioned
 manifest pinned to one immutable catalog revision. The `SkillInstaller` validates safe paths and
-hashes, resolves dependencies, writes a lock and ownership manifest, and atomically creates a bounded
-per-run projection. Genkit points `genkit_middleware.Skills` only at that projection. Never point
+hashes, writes a snake_case lock and ownership manifest, and atomically creates a bounded per-run
+projection. The service exposes only the current approved catalog revision; runners stage verified
+packages during bootstrap for the job lifetime, and old frozen locks require a verified cache or
+fail without fallback. Genkit points `genkit_middleware.Skills` only at that projection. Never point
 middleware at the complete extension tree or let `use_skill` bypass context-service authorization.
 If middleware cannot preserve these invariants, retain the same resolved-lock contract and render
 selected skills into trusted task instructions instead.
@@ -359,10 +362,11 @@ The supervisor creates an ephemeral workspace, checks out exact revisions, confi
 
 Event-triggered and scheduled definitions create the same workflow runs as manual requests. Deterministically parse and allowlist MR URLs; do not ask a model to decide whether a URL is an authorized repository.
 
-Automation definitions select named skills and may pin a catalog revision. Resolve that selection
-once when creating a workflow run, persist the immutable lock with the run, and reuse it for every
-retry even after a newer skill deployment. The automation service uses the shared Python resolver;
-runner bootstrap consumes the same frozen lock.
+Automation definitions select named skills and may require a catalog revision. Resolve that
+selection when creating a workflow run and persist the immutable lock. Same-job retries reuse staged
+packages. A new job may satisfy an old lock from a verified cache; otherwise unavailable exact
+packages fail rather than substituting a newer deployment. The automation service uses the shared
+Python resolver, and runner bootstrap consumes the same frozen lock.
 
 Support the original use cases:
 
