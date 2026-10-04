@@ -11,6 +11,8 @@ from team_agent_database import (
     KnowledgeChunkCollection,
     MongoContextRepository,
     MongoKnowledgeIndex,
+    MongoSkillCatalog,
+    SkillCollection,
 )
 
 from team_context_service.app import AppDependencies, build_app
@@ -42,11 +44,15 @@ def create_app_from_env() -> FastAPI:
     knowledge_index = MongoKnowledgeIndex(
         cast(KnowledgeChunkCollection, database["document_chunks"])
     )
+    skill_catalog = MongoSkillCatalog(
+        cast(SkillCollection, database["skills"]), source_id=pack.manifest.id
+    )
     return build_app(
         AppDependencies(
             pack=pack,
             authenticator=StaticBearerAuthenticator.from_json(principals),
             knowledge_index=knowledge_index,
+            skill_catalog=skill_catalog,
             readiness=backend.readiness,
             startup=backend.startup,
             shutdown=backend.shutdown,

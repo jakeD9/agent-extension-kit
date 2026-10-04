@@ -23,6 +23,7 @@ class _Revisions:
             "revision": query["revision"],
             "status": "ready",
             "chunk_count": 3,
+            "skill_count": 1,
         }
 
 
@@ -42,13 +43,15 @@ class _Database:
 class _Repository:
     def __init__(self) -> None:
         self.migrated = False
-        self.synchronized: tuple[str, str, int] | None = None
+        self.synchronized: tuple[str, str, int, int] | None = None
 
     async def migrate(self) -> None:
         self.migrated = True
 
-    async def synchronize(self, source_id: str, revision: str, chunks: list[Any]) -> None:
-        self.synchronized = (source_id, revision, len(chunks))
+    async def synchronize(
+        self, source_id: str, revision: str, chunks: list[Any], skills: list[Any]
+    ) -> None:
+        self.synchronized = (source_id, revision, len(chunks), len(skills))
 
 
 def test_backend_initializes_checks_revision_and_closes_client() -> None:
@@ -67,6 +70,7 @@ def test_backend_initializes_checks_revision_and_closes_client() -> None:
         "agent-extension-kit-sample",
         "fixture-revision",
         3,
+        1,
     )
     assert status == "ready"
     assert details == {"mongodb": "ready", "sourceRevision": "fixture-revision"}

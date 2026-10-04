@@ -1,3 +1,5 @@
+import base64
+import json
 import re
 import unicodedata
 from collections.abc import Sequence
@@ -10,6 +12,9 @@ from team_agent_contracts import (
     KnowledgeResult,
     KnowledgeSearchRequest,
     Principal,
+    SkillDetail,
+    SkillListRequest,
+    SkillSummary,
 )
 
 
@@ -25,10 +30,36 @@ class KnowledgeChunk(BaseModel):
     citation: Citation
 
 
+class SkillPackage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    description: str
+    version: str
+    projects: list[str]
+    access_groups: list[str]
+    allowed_tools: list[str]
+    body: str
+    citation: Citation
+
+
 class KnowledgeIndex(Protocol):
     async def search(
         self, request: KnowledgeSearchRequest, principal: Principal
     ) -> list[KnowledgeResult]: ...
+
+
+class InvalidSkillCursor(ValueError):
+    pass
+
+
+class SkillCatalog(Protocol):
+    async def list(
+        self, request: SkillListRequest, principal: Principal
+    ) -> tuple[list[SkillSummary], str | None]: ...
+
+    async def get(self, name: str, project: str, principal: Principal) -> SkillDetail | None: ...
 
 
 def _tokenize(value: str) -> list[str]:
@@ -74,4 +105,107 @@ class InMemoryKnowledgeIndex:
         ]
 
 
-__all__ = ["InMemoryKnowledgeIndex", "KnowledgeChunk", "KnowledgeIndex"]
+def encode_skill_cursor(project: str, after: str) -> str:
+    payload = json.dumps(
+        {"v": 1, "project": project, "after": after}, separators=(",", ":"), sort_keys=True
+    ).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def decode_skill_cursor(cursor: str, project: str) -> str:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.b64decode(cursor + padding, altchars=b"-_", validate=True))
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"v", "project", "after"}
+            or payload["v"] != 1
+            or payload["project"] != project
+            or not isinstance(payload["after"], str)
+            or not payload["after"]
+        ):
+            raise ValueError
+    except (ValueError, TypeError, json.JSONDecodeError) as error:
+        raise InvalidSkillCursor("The skill cursor is invalid") from error
+    return payload["after"]
+
+
+class InMemorySkillCatalog:
+    def __init__(self, skills: Sequence[SkillPackage]) -> None:
+        self._skills = tuple(skills)
+
+    @staticmethod
+    def _authorized(skill: SkillPackage, project: str, principal: Principal) -> bool:
+        return (
+            project in principal.projects
+            and project in skill.projects
+            and bool(set(skill.access_groups).intersection(principal.groups))
+        )
+
+    async def list(
+        self, request: SkillListRequest, principal: Principal
+    ) -> tuple[list[SkillSummary], str | None]:
+        authorized = sorted(
+            (
+                skill
+                for skill in self._skills
+                if self._authorized(skill, request.project, principal)
+            ),
+            key=lambda skill: skill.id,
+        )
+        after = decode_skill_cursor(request.cursor, request.project) if request.cursor else None
+        if after is not None:
+            authorized = [skill for skill in authorized if skill.id > after]
+        page = authorized[: request.limit + 1]
+        visible = page[: request.limit]
+        items = [
+            SkillSummary(
+                name=skill.name,
+                description=skill.description,
+                version=skill.version,
+                projects=skill.projects,
+                access_groups=skill.access_groups,
+                allowed_tools=skill.allowed_tools,
+                citation=skill.citation,
+            )
+            for skill in visible
+        ]
+        next_cursor = None
+        if len(page) > request.limit:
+            next_cursor = encode_skill_cursor(request.project, visible[-1].id)
+        return items, next_cursor
+
+    async def get(self, name: str, project: str, principal: Principal) -> SkillDetail | None:
+        skill = next(
+            (
+                candidate
+                for candidate in self._skills
+                if candidate.name == name and self._authorized(candidate, project, principal)
+            ),
+            None,
+        )
+        if skill is None:
+            return None
+        return SkillDetail(
+            name=skill.name,
+            description=skill.description,
+            version=skill.version,
+            projects=skill.projects,
+            access_groups=skill.access_groups,
+            allowed_tools=skill.allowed_tools,
+            citation=skill.citation,
+            body=skill.body,
+        )
+
+
+__all__ = [
+    "InMemoryKnowledgeIndex",
+    "InMemorySkillCatalog",
+    "InvalidSkillCursor",
+    "KnowledgeChunk",
+    "KnowledgeIndex",
+    "SkillCatalog",
+    "SkillPackage",
+    "decode_skill_cursor",
+    "encode_skill_cursor",
+]

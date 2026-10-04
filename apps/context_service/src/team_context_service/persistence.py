@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
-from team_context_core import KnowledgeChunk
+from team_context_core import KnowledgeChunk, SkillPackage
 
 from team_context_service.content_pack import ContentPack
 
@@ -25,7 +25,11 @@ class _Repository(Protocol):
     async def migrate(self) -> None: ...
 
     async def synchronize(
-        self, source_id: str, revision: str, chunks: Sequence[KnowledgeChunk]
+        self,
+        source_id: str,
+        revision: str,
+        chunks: Sequence[KnowledgeChunk],
+        skills: Sequence[SkillPackage],
     ) -> None: ...
 
 
@@ -49,6 +53,7 @@ class MongoContextBackend:
     @property
     def _revision(self) -> str:
         revisions = {chunk.citation.revision for chunk in self._pack.chunks}
+        revisions.update(skill.citation.revision for skill in self._pack.skills)
         if len(revisions) != 1:
             raise ValueError("A content pack must contain exactly one pinned revision")
         return next(iter(revisions))
@@ -61,7 +66,10 @@ class MongoContextBackend:
                 await self._database.command({"ping": 1})
                 await self._repository.migrate()
                 await self._repository.synchronize(
-                    self._pack.manifest.id, self._revision, self._pack.chunks
+                    self._pack.manifest.id,
+                    self._revision,
+                    self._pack.chunks,
+                    self._pack.skills,
                 )
             except Exception:
                 self._initialized = False
@@ -93,7 +101,11 @@ class MongoContextBackend:
                 "mongodb": "unavailable",
                 "sourceRevision": self._revision,
             }
-        if revision is None or revision.get("chunk_count") != len(self._pack.chunks):
+        if (
+            revision is None
+            or revision.get("chunk_count") != len(self._pack.chunks)
+            or revision.get("skill_count") != len(self._pack.skills)
+        ):
             return "not_ready", {
                 "mongodb": "ready",
                 "sourceRevision": "not_ready",

@@ -47,6 +47,40 @@ class KnowledgeSearchResponse(ContractModel):
     request_id: str = Field(serialization_alias="requestId")
 
 
+class SkillListRequest(ContractModel):
+    project: str = Field(min_length=1)
+    limit: int = Field(default=50, ge=1, le=50)
+    cursor: str | None = Field(default=None, min_length=1, max_length=4_096)
+
+
+class SkillGetRequest(ContractModel):
+    project: str = Field(min_length=1)
+
+
+class SkillSummary(ContractModel):
+    name: str
+    description: str
+    version: str
+    projects: list[str]
+    access_groups: list[str] = Field(serialization_alias="accessGroups")
+    allowed_tools: list[str] = Field(serialization_alias="allowedTools")
+    citation: Citation
+
+
+class SkillDetail(SkillSummary):
+    body: str
+
+
+class SkillListResponse(ContractModel):
+    items: list[SkillSummary]
+    next_cursor: str | None = Field(default=None, serialization_alias="nextCursor")
+    request_id: str = Field(serialization_alias="requestId")
+
+
+class SkillGetResponse(SkillDetail):
+    request_id: str = Field(serialization_alias="requestId")
+
+
 class ErrorDetail(ContractModel):
     code: str
     message: str
@@ -67,4 +101,10 @@ __all__ = [
     "KnowledgeSearchRequest",
     "KnowledgeSearchResponse",
     "Principal",
+    "SkillDetail",
+    "SkillGetRequest",
+    "SkillGetResponse",
+    "SkillListRequest",
+    "SkillListResponse",
+    "SkillSummary",
 ]

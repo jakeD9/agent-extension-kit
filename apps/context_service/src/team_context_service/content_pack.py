@@ -4,7 +4,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 from team_agent_contracts import Authority, Citation
-from team_context_core import KnowledgeChunk
+from team_context_core import KnowledgeChunk, SkillPackage
 
 
 def _to_camel(value: str) -> str:
@@ -50,9 +50,21 @@ class KnowledgeMetadata(BaseModel):
     authority: Authority
 
 
+class SkillMetadata(BaseModel):
+    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True, extra="forbid")
+
+    name: str = Field(min_length=1, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    description: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    projects: list[str] = Field(min_length=1)
+    access_groups: list[str] = Field(min_length=1)
+    allowed_tools: list[str] = Field(default_factory=list)
+
+
 class ContentPack(BaseModel):
     manifest: ExtensionManifest
     chunks: list[KnowledgeChunk]
+    skills: list[SkillPackage]
 
 
 def _read_yaml(path: Path) -> Any:
@@ -91,7 +103,7 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
         knowledge_root = _safe_child(resolved_root, configured_root)
         for path in sorted(knowledge_root.rglob("*.md")):
             metadata_raw, body = _read_markdown(path)
-            metadata = KnowledgeMetadata.model_validate(metadata_raw)
+            knowledge_metadata = KnowledgeMetadata.model_validate(metadata_raw)
             relative_path = path.relative_to(resolved_root).as_posix()
             heading = next(
                 (line.removeprefix("# ") for line in body.splitlines() if line.startswith("# ")),
@@ -100,10 +112,10 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
             chunks.append(
                 KnowledgeChunk(
                     id=f"{manifest.id}:{relative_path}",
-                    project=metadata.project,
-                    access_groups=metadata.access_groups,
-                    authority=metadata.authority,
-                    title=metadata.title,
+                    project=knowledge_metadata.project,
+                    access_groups=knowledge_metadata.access_groups,
+                    authority=knowledge_metadata.authority,
+                    title=knowledge_metadata.title,
                     body=body,
                     citation=Citation(
                         repository=manifest.repository,
@@ -113,7 +125,51 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
                     ),
                 )
             )
-    return ContentPack(manifest=manifest, chunks=chunks)
+
+    configured_skill_roots = manifest.skills.roots or (
+        [manifest.skills.root] if manifest.skills.root else []
+    )
+    skills: list[SkillPackage] = []
+    skill_names: set[str] = set()
+    manifest_projects = {project.id: set(project.access_groups) for project in manifest.projects}
+    for configured_root in configured_skill_roots:
+        skill_root = _safe_child(resolved_root, configured_root)
+        for path in sorted(skill_root.rglob("SKILL.md")):
+            metadata_raw, body = _read_markdown(path)
+            skill_metadata = SkillMetadata.model_validate(metadata_raw)
+            for project in skill_metadata.projects:
+                if project not in manifest_projects:
+                    raise ValueError(
+                        f"Skill {skill_metadata.name} references undeclared project: {project}"
+                    )
+                undeclared_groups = set(skill_metadata.access_groups) - manifest_projects[project]
+                if undeclared_groups:
+                    raise ValueError(
+                        f"Skill {skill_metadata.name} references undeclared access groups for "
+                        f"project {project}: {sorted(undeclared_groups)}"
+                    )
+            if skill_metadata.name in skill_names:
+                raise ValueError(f"Duplicate skill name: {skill_metadata.name}")
+            skill_names.add(skill_metadata.name)
+            relative_path = path.relative_to(resolved_root).as_posix()
+            skills.append(
+                SkillPackage(
+                    id=f"{manifest.id}:{relative_path}",
+                    name=skill_metadata.name,
+                    description=skill_metadata.description,
+                    version=skill_metadata.version,
+                    projects=skill_metadata.projects,
+                    access_groups=skill_metadata.access_groups,
+                    allowed_tools=skill_metadata.allowed_tools,
+                    body=body,
+                    citation=Citation(
+                        repository=manifest.repository,
+                        path=relative_path,
+                        revision=revision,
+                    ),
+                )
+            )
+    return ContentPack(manifest=manifest, chunks=chunks, skills=skills)
 
 
 __all__ = ["ContentPack", "ExtensionManifest", "load_content_pack"]

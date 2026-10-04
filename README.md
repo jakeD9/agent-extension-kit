@@ -5,9 +5,10 @@ governed memory, and narrowly scoped tools. Genkit Python will coordinate hosted
 initial OpenAI model path, while the extension kit remains usable by local Codex and Claude clients
 without Genkit or database credentials.
 
-The migration is intentionally incremental. The current S02 implementation provides authenticated,
-revision-pinned knowledge search from a persistent MongoDB-backed Python service. CLI/MCP, Genkit
-orchestration, coding runners, Slack, and automations arrive in later roadmap slices.
+The migration is intentionally incremental. The current S03 implementation provides authenticated,
+revision-pinned knowledge search and authorized skill discovery/loading from a persistent
+MongoDB-backed Python service. CLI/MCP, Genkit orchestration, coding runners, Slack, and automations
+arrive in later roadmap slices.
 
 ## Quick start
 
@@ -26,6 +27,9 @@ curl -s http://localhost:3000/v1/knowledge/search \
   -H 'Authorization: Bearer dev-token' \
   -H 'Content-Type: application/json' \
   -d '{"query":"stable idempotency key","project":"event-ingestion"}'
+
+curl -s 'http://localhost:3000/v1/skills/diagnose-and-fix?project=event-ingestion' \
+  -H 'Authorization: Bearer dev-token'
 ```
 
 `/ready` returns 503 until MongoDB is reachable, migrations have applied, and the configured Git
@@ -43,7 +47,7 @@ revision has synchronized. To run the process directly, start MongoDB first, loa
 - `.agents/skills/developing-genkit-python/` contains the project-scoped Genkit development skill.
 
 The hyphenated TypeScript application and package directories remain temporarily as a parity oracle.
-They are removed in S03 after Python REST, CLI, and MCP parity is verified.
+They are removed in S04 after Python REST, CLI, and MCP parity is verified.
 
 ## Development
 

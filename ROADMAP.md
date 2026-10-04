@@ -8,7 +8,7 @@ brief and the workstream artifacts under `.roadmap/workstreams/` supply fresh-se
   > After this: an authenticated REST request returns authorized, revision-pinned fixture knowledge from the Python service.
 - [x] **S02: Persistent context boundary** `risk:medium` `depends:[S01]`
   > After this: cited retrieval survives restart and the context service cannot access runtime collections.
-- [ ] **S03: Authorized skill-catalog tracer** `risk:medium` `depends:[S02]`
+- [x] **S03: Authorized skill-catalog tracer** `risk:medium` `depends:[S02]`
   > After this: authenticated REST callers can list and load only authorized, revision-pinned skills from the Python context service.
 - [ ] **S04: Local CLI/MCP parity and TypeScript cutover** `risk:medium` `depends:[S03]`
   > After this: Python REST, CLI, and MCP agree on search and skill results with no Node runtime dependency.

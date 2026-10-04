@@ -7,10 +7,10 @@ that context globally available or embedding authorization in prompts. Genkit Py
 hosted orchestration runtime, initially through an explicit OpenAI model configuration; local Codex
 and Claude integrations remain independent of Genkit.
 
-Migration proceeds as verified vertical slices. The current implementation is S02: a Python context
-service that validates a Git-owned extension pack, synchronizes its pinned revision into MongoDB,
-and provides authenticated, cited REST search. CLI/MCP, Genkit, coding jobs, Slack, and automation are
-not yet implemented.
+Migration proceeds as verified vertical slices. The current implementation is S03: a Python context
+service that validates a Git-owned extension pack, synchronizes knowledge and skills at a pinned
+revision into MongoDB, and provides authenticated, cited REST search plus authorized skill list/get
+operations. CLI/MCP, Genkit, coding jobs, Slack, and automation are not yet implemented.
 
 ## Runtime boundaries
 
@@ -47,6 +47,11 @@ An extension pack contains a validated manifest, knowledge roots, and portable s
 Every returned knowledge item carries repository, path, revision, and optional heading. Project,
 group, and authority filters are applied before scoring. Repository content is untrusted input and
 cannot grant tool authority.
+
+Skill metadata must reference projects and access groups declared by the extension manifest. Skill
+catalog adapters are bound to the configured extension source, and source/project/group
+authorization is applied before pagination and body retrieval. Absent and unauthorized names share
+one not-found response. Skill bodies retain repository/path/revision provenance.
 
 REST is the primary context interface. MCP and CLI will adapt the same application services and
 policy decisions. Genkit-specific types stay inside `runtime_genkit`.

@@ -16,8 +16,18 @@ from team_agent_contracts import (
     ErrorResponse,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    SkillGetRequest,
+    SkillGetResponse,
+    SkillListRequest,
+    SkillListResponse,
 )
-from team_context_core import InMemoryKnowledgeIndex, KnowledgeIndex
+from team_context_core import (
+    InMemoryKnowledgeIndex,
+    InMemorySkillCatalog,
+    InvalidSkillCursor,
+    KnowledgeIndex,
+    SkillCatalog,
+)
 
 from team_context_service.content_pack import ContentPack
 
@@ -30,6 +40,7 @@ class AppDependencies:
     pack: ContentPack
     authenticator: Authenticator
     knowledge_index: KnowledgeIndex | None = None
+    skill_catalog: SkillCatalog | None = None
     readiness: Readiness | None = None
     startup: LifecycleHook | None = None
     shutdown: LifecycleHook | None = None
@@ -55,6 +66,7 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
 
     app = FastAPI(title="Team Context Service", version="0.2.0", lifespan=lifespan)
     index = dependencies.knowledge_index or InMemoryKnowledgeIndex(dependencies.pack.chunks)
+    skills = dependencies.skill_catalog or InMemorySkillCatalog(dependencies.pack.skills)
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -69,8 +81,15 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
     async def validation_error(
         request: Request, _error_value: RequestValidationError
     ) -> JSONResponse:
+        return _error("validation_failed", "The request is invalid", request.state.request_id, 422)
+
+    @app.exception_handler(Exception)
+    async def internal_error(request: Request, _error_value: Exception) -> JSONResponse:
         return _error(
-            "validation_failed", "The search request is invalid", request.state.request_id, 422
+            "internal_error",
+            "The request could not be completed",
+            request.state.request_id,
+            500,
         )
 
     @app.get("/health")
@@ -117,7 +136,70 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             )
         results = await index.search(search_request, principal)
         response = KnowledgeSearchResponse(results=results, request_id=request.state.request_id)
-        return JSONResponse(content=response.model_dump(by_alias=True, mode="json"))
+        return JSONResponse(
+            content=response.model_dump(by_alias=True, mode="json", exclude_none=True)
+        )
+
+    @app.get("/v1/skills")
+    async def list_skills(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> JSONResponse:
+        principal = await dependencies.authenticator.authenticate(authorization)
+        if principal is None:
+            return _error(
+                "unauthorized",
+                "A valid bearer token is required",
+                request.state.request_id,
+                401,
+            )
+        try:
+            list_request = SkillListRequest.model_validate(dict(request.query_params))
+            items, next_cursor = await skills.list(list_request, principal)
+        except (ValidationError, InvalidSkillCursor):
+            return _error(
+                "validation_failed",
+                "The skill list request is invalid",
+                request.state.request_id,
+                422,
+            )
+        response = SkillListResponse(
+            items=items, next_cursor=next_cursor, request_id=request.state.request_id
+        )
+        return JSONResponse(
+            content=response.model_dump(by_alias=True, mode="json", exclude_none=True)
+        )
+
+    @app.get("/v1/skills/{name}")
+    async def get_skill(
+        name: str,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> JSONResponse:
+        principal = await dependencies.authenticator.authenticate(authorization)
+        if principal is None:
+            return _error(
+                "unauthorized",
+                "A valid bearer token is required",
+                request.state.request_id,
+                401,
+            )
+        try:
+            get_request = SkillGetRequest.model_validate(dict(request.query_params))
+        except ValidationError:
+            return _error(
+                "validation_failed",
+                "The skill request is invalid",
+                request.state.request_id,
+                422,
+            )
+        skill = await skills.get(name, get_request.project, principal)
+        if skill is None:
+            return _error("skill_not_found", "Skill not found", request.state.request_id, 404)
+        response = SkillGetResponse(**skill.model_dump(), request_id=request.state.request_id)
+        return JSONResponse(
+            content=response.model_dump(by_alias=True, mode="json", exclude_none=True)
+        )
 
     return app
 
