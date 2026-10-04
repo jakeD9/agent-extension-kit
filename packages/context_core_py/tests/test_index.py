@@ -9,8 +9,8 @@ from team_agent_contracts import (
     SkillListRequest,
 )
 from team_context_core import (
+    GitSkillCatalog,
     InMemoryKnowledgeIndex,
-    InMemorySkillCatalog,
     KnowledgeChunk,
     SkillPackage,
 )
@@ -98,7 +98,7 @@ def test_skill_catalog_uses_stable_cursor_pagination() -> None:
             "citation": Citation(repository="sample", path="skills/b/SKILL.md", revision="rev"),
         }
     )
-    catalog = InMemorySkillCatalog([second, first])
+    catalog = GitSkillCatalog([second, first])
     principal = Principal(id="dev", groups=["engineering"], projects=["project"])
 
     items, cursor = asyncio.run(

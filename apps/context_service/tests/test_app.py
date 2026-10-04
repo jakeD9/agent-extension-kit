@@ -201,9 +201,15 @@ def test_health_and_readiness_report_loaded_pack(client: TestClient) -> None:
     }
 
 
-def test_lifecycle_runs_and_dependency_failure_blocks_readiness() -> None:
+def test_mongo_failure_blocks_readiness_but_not_git_skill_discovery() -> None:
     pack = load_content_pack(EXTENSION_PATH, "fixture-revision")
-    authenticator = StaticBearerAuthenticator({})
+    authenticator = StaticBearerAuthenticator(
+        {
+            "engineering-token": Principal(
+                id="dev-1", groups=["engineering"], projects=["event-ingestion"]
+            )
+        }
+    )
     events: list[str] = []
 
     async def startup() -> None:
@@ -230,5 +236,11 @@ def test_lifecycle_runs_and_dependency_failure_blocks_readiness() -> None:
         assert events == ["started"]
         assert response.status_code == 503
         assert response.json()["details"] == {"mongodb": "unavailable"}
+        skill_response = lifecycle_client.get(
+            "/v1/skills/diagnose-and-fix?project=event-ingestion",
+            headers={"authorization": "Bearer engineering-token"},
+        )
+        assert skill_response.status_code == 200
+        assert skill_response.json()["citation"]["revision"] == "fixture-revision"
 
     assert events == ["started", "stopped"]

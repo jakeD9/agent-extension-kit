@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
-from team_context_core import KnowledgeChunk, SkillPackage
+from team_context_core import KnowledgeChunk
 
 from team_context_service.content_pack import ContentPack
 
@@ -29,7 +29,6 @@ class _Repository(Protocol):
         source_id: str,
         revision: str,
         chunks: Sequence[KnowledgeChunk],
-        skills: Sequence[SkillPackage],
     ) -> None: ...
 
 
@@ -69,7 +68,6 @@ class MongoContextBackend:
                     self._pack.manifest.id,
                     self._revision,
                     self._pack.chunks,
-                    self._pack.skills,
                 )
             except Exception:
                 self._initialized = False
@@ -101,11 +99,7 @@ class MongoContextBackend:
                 "mongodb": "unavailable",
                 "sourceRevision": self._revision,
             }
-        if (
-            revision is None
-            or revision.get("chunk_count") != len(self._pack.chunks)
-            or revision.get("skill_count") != len(self._pack.skills)
-        ):
+        if revision is None or revision.get("chunk_count") != len(self._pack.chunks):
             return "not_ready", {
                 "mongodb": "ready",
                 "sourceRevision": "not_ready",

@@ -4,7 +4,7 @@ These artifacts let an engineer start any roadmap slice without prior chat histo
 
 1. Read the canonical Genkit architecture brief, `STATUS.md`, the selected slice's `BRIEF.md`, and
    every dependency's `SUMMARY.md`.
-2. For S05, S07, S08, S17, S19, or S21, also read
+2. For S07, S09, S10, S19, S21, or S23, also read
    `.agents/skills/developing-genkit-python/SKILL.md` and only the references it routes to for the
    slice. Treat the installed skill as implementation guidance, not as runtime authorization.
 3. Confirm dependencies are complete and restate the slice boundary before editing.

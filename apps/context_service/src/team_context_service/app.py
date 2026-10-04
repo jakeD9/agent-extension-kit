@@ -22,8 +22,8 @@ from team_agent_contracts import (
     SkillListResponse,
 )
 from team_context_core import (
+    GitSkillCatalog,
     InMemoryKnowledgeIndex,
-    InMemorySkillCatalog,
     InvalidSkillCursor,
     KnowledgeIndex,
     SkillCatalog,
@@ -66,7 +66,7 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
 
     app = FastAPI(title="Team Context Service", version="0.2.0", lifespan=lifespan)
     index = dependencies.knowledge_index or InMemoryKnowledgeIndex(dependencies.pack.chunks)
-    skills = dependencies.skill_catalog or InMemorySkillCatalog(dependencies.pack.skills)
+    skills = dependencies.skill_catalog or GitSkillCatalog(dependencies.pack.skills)
 
     @app.middleware("http")
     async def request_id_middleware(

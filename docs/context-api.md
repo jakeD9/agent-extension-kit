@@ -37,10 +37,9 @@ Lists skill metadata authorized for the caller. Query parameters:
 - `cursor` (optional): opaque continuation value returned by an earlier request for the same
   project. Malformed, unsupported, or cross-project cursors return 422.
 
-The service binds each catalog instance to the configured extension source and applies that source,
-project, and group authorization before sorting or pagination. A project outside the principal's
-scope returns an empty page, which does not disclose whether skills exist there. Reusing a cursor
-issued by another source cannot make that source's records visible.
+The service builds the catalog from its configured pinned Git/filesystem content pack and applies
+project and group authorization before sorting or pagination. A project outside the principal's
+scope returns an empty page, which does not disclose whether skills exist there.
 
 ```json
 {
@@ -72,6 +71,10 @@ Loads one authorized skill body. The `project` query parameter is required. The 
 the list metadata, `body`, and repository/path/revision provenance. A nonexistent name and a real
 name outside the caller's authorized scope both return the identical `404 skill_not_found`
 contract, preventing name discovery across authorization boundaries.
+
+S03 serves the one revision loaded at startup. Immutable selection manifests, requested available
+revisions, and complete package downloads are introduced by S04 as specified in the skills
+distribution addendum; they do not require a MongoDB skill catalog.
 
 ## Knowledge search
 

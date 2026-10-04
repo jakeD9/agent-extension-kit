@@ -30,8 +30,8 @@
 
 ## S03 inputs and constraints
 
-- Reuse the Mongo-backed application service for REST, CLI, and MCP parity; do not fork retrieval or
-  authorization logic by transport.
+- Reuse the application service for REST, CLI, and MCP parity; Mongo remains the knowledge index,
+  while skills are rebuilt from the pinned Git/filesystem content pack.
 - Port skill metadata/body retrieval and project-scoped local-agent configuration before removing
   the TypeScript parity implementation.
 - Remove the Node workspace only after parity and negative-authorization evidence is fresh; Git

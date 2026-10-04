@@ -1,8 +1,11 @@
 # Team Agent Architecture: Genkit Python Runtime and Portable Extension Kit
 
 Status: Implementation handoff — supersedes the earlier ADK brief
-Updated: 2026-10-03
+Updated: 2026-10-04
 Audience: Codex and the engineering team
+
+The implementation requirements in `skills-distribution-addendum.md` are normative where they
+replace this brief's earlier skill-catalog or distribution design.
 
 ## 1. Goal and architectural decisions
 
@@ -20,7 +23,9 @@ Decisions:
   remain later provider-contract targets. Model agnostic does not mean identical feature behavior.
 - MongoDB cluster is the only required durable database. Use separate `agent_runtime` and `team_context` databases and credentials.
 - REST is the primary context-service interface; MCP and CLI adapt the same application services.
-- Git owns canonical knowledge, conventions, and skills. MongoDB owns indexes, runtime records, and dynamic memory.
+- Git owns canonical knowledge, conventions, and skills. The context service builds skill discovery
+  metadata in memory and distributes immutable packages through authenticated APIs. MongoDB owns
+  knowledge indexes, runtime records, and dynamic memory, not the skill catalog.
 - Codex is the initial coding harness. Claude Code is a later adapter behind the same contract.
 - Produce three images from documented Dockerfile targets: `company/team-agent`, `company/team-context`, and `company/coding-runner`.
 - Provide Dockerfiles and development Compose only. Do not add Kubernetes, ECS, Nomad, or production hosting manifests.
@@ -169,23 +174,28 @@ Provider contract tests cover multi-step tools, structured output with tools, st
 
 ### Skills and context
 
-Canonical skills remain Git-owned and provider neutral. Each includes trigger metadata,
-prerequisites, procedure, constraints, evidence requirements, and completion criteria. Genkit
-consumes them through our `SkillLoader`, context-service tools, and the pinned Python
-`genkit_middleware.Skills` integration where the compatibility gate proves it suitable.
+Canonical skills remain Git-owned and provider neutral. The context service scans validated packages
+from one pinned checkout into an in-memory discovery catalog; MongoDB is not required for skill
+discovery or download. Each package includes trigger metadata, prerequisites, procedure, constraints,
+evidence requirements, completion criteria, declared dependencies, and a complete resource inventory.
 
-The `SkillLoader` resolves caller authorization and pins content revisions before Genkit sees a
-skill. Materialize only that bounded selection into a per-run adapter directory and point the Skills
-middleware at that projection. Never point middleware at the complete extension tree, and do not
-let `use_skill` bypass context-service authorization or audit. If the middleware cannot preserve
-these invariants, retain the same `SkillLoader` contract and render selected skills into trusted task
-instructions instead.
+The shared Python `SkillClient` resolves caller authorization and named/all selections to a versioned
+manifest pinned to one immutable catalog revision. The `SkillInstaller` validates safe paths and
+hashes, resolves dependencies, writes a lock and ownership manifest, and atomically creates a bounded
+per-run projection. Genkit points `genkit_middleware.Skills` only at that projection. Never point
+middleware at the complete extension tree or let `use_skill` bypass context-service authorization.
+If middleware cannot preserve these invariants, retain the same resolved-lock contract and render
+selected skills into trusted task instructions instead.
 
 Project development also uses the checked-in `developing-genkit-python` agent skill installed from
 `genkit-ai/skills`. That skill guides contributors writing Genkit code; it is not part of the hosted
 runtime's team-skill catalog and grants no application capability.
 
-Advertise relevant authorized metadata first; load full skill bodies/resources on demand and record pinned revisions. Render hosted skills into task instructions through the runtime adapter. Use harness-specific adapters to install compatible project instructions/skills for Codex and Claude. Script execution happens in coding containers.
+Advertise relevant authorized metadata first; load full skill bodies/resources on demand and record
+the resolved lock on each run. The `team-agent skills pull` interface installs named, authorized-all,
+or frozen-lock selections without executing downloaded scripts. Use project-scoped generic, Codex,
+and Claude adapters; required runner installation completes before harness launch. Script execution,
+when explicitly authorized later, happens only in coding containers and never during installation.
 
 Add a compact authorized baseline to each turn: scope, essential conventions, and selected approved memories. Retrieve additional knowledge through tools, preserving citations and distinguishing source content from trusted instructions. Cap context size.
 
@@ -220,6 +230,8 @@ POST /v1/knowledge/search
 GET  /v1/documents/{id}
 GET  /v1/skills
 GET  /v1/skills/{name}
+POST /v1/skills:resolve
+GET  /v1/skill-packages/{package_id}
 POST /v1/memories/search
 POST /v1/memory-proposals
 POST /v1/memory-proposals/{id}/approve
@@ -331,7 +343,11 @@ Deduplicate notifications by job/attempt/result version. Enforce deadlines and c
 
 If a result requires input or authorization, save a resumable checkpoint and transition the logical run accordingly. Persist artifacts before destroying its workspace. Retrying a job uses a new attempt and does not republish an already completed external action.
 
-Every request/result is schema-validated and versioned. A request includes `job_id`, `run_id`, submission idempotency key, repository, base/head revisions, objective, mode (`investigate`, `fix`, `review`, `integrate`), harness, pinned skill/content revisions, context references, and supervisor-owned capability policy. Policies include allowed repositories/paths/commands, may-edit/publish flags, timeout, diff limits, and resource limits.
+Every request/result is schema-validated and versioned. A request includes `job_id`, `run_id`,
+submission idempotency key, repository, base/head revisions, objective, mode (`investigate`, `fix`,
+`review`, `integrate`), harness, an immutable skill lock, pinned content revision, context references,
+and supervisor-owned capability policy. Policies include allowed repositories/paths/commands,
+may-edit/publish flags, timeout, diff limits, and resource limits.
 
 Results include terminal status, diagnosis, evidence, findings, patch reference, changed files, harness-reported checks, independent verification, exact reviewed SHA, publication outcome, usage, and memory proposals. Findings include severity, path/line reference, explanation, evidence, and suggested action.
 
@@ -342,6 +358,11 @@ The supervisor creates an ephemeral workspace, checks out exact revisions, confi
 ## 10. Automations
 
 Event-triggered and scheduled definitions create the same workflow runs as manual requests. Deterministically parse and allowlist MR URLs; do not ask a model to decide whether a URL is an authorized repository.
+
+Automation definitions select named skills and may pin a catalog revision. Resolve that selection
+once when creating a workflow run, persist the immutable lock with the run, and reuse it for every
+retry even after a newer skill deployment. The automation service uses the shared Python resolver;
+runner bootstrap consumes the same frozen lock.
 
 Support the original use cases:
 
@@ -364,7 +385,11 @@ Emoji is a projection, not the authority. Internal review records establish comp
 
 `agent_runtime`: identities, slack_threads, sessions, session_snapshots, snapshot_chunks, session_pointers, session_events, runs, workflow_steps, coding_jobs, completion_outbox, action_intents, approvals, event_receipts, automations, automation_runs, code_reviews, review_projections.
 
-`team_context`: documents, document_chunks, source_revisions, skills, memories, memory_proposals, audit_events.
+`team_context`: documents, document_chunks, source_revisions, memories, memory_proposals, audit_events.
+
+Skill packages and discovery metadata are rebuildable from Git and are not MongoDB collections.
+Runtime and automation records retain only the selected identities, immutable revisions, and hashes
+needed for provenance and retry.
 
 Only the context service accesses `team_context`. Local agents receive no MongoDB credentials. Use collection validators and explicit schema migrations.
 
@@ -406,19 +431,29 @@ documented; mocks allow application work to proceed without claiming live compat
 
 ### Phase 1 — Foundation and extension
 
-Create Python workspace, contracts, mock clients, MongoDB repositories/indexes, context REST service, development Compose, image targets, and fixture knowledge/skills. Implement authenticated cited retrieval, memory proposals, MCP and context CLI, and project-scoped local-agent examples.
+Create the Python workspace, contracts, mock clients, MongoDB knowledge repositories/indexes,
+context REST service, development Compose, image targets, and fixture knowledge/skills. Implement
+authenticated cited retrieval, the Git-backed in-memory skill catalog, immutable package resolution,
+verified pull/lock installation, memory proposals, MCP/context CLI, and project-scoped local-agent
+adapters.
 
-Exit: all image targets build; authorized REST/MCP/CLI retrieval agrees; denied scope never returns chunks; source revisions and memory provenance are preserved.
+Exit: all image targets build; authorized REST/MCP/CLI retrieval agrees; targeted/all/frozen pulls
+are atomic and reproducible; Codex/Claude project layouts pass discovery fixtures; denied scope never
+returns chunks or packages; knowledge revisions, skill locks, and memory provenance are preserved.
 
 ### Phase 2 — Genkit coordinator and conversations
 
-Implement model factory, Genkit adapter, SkillLoader, MongoDB session store, provider contract suite, and runtime CLI. Use mock runtime fixtures in CI, then validate one live provider when credentials exist.
+Implement model factory, Genkit adapter consuming the shared skill resolver/installer, MongoDB session
+store, provider contract suite, and runtime CLI. Use mock runtime fixtures in CI, then validate one
+live provider when credentials exist.
 
 Exit: skill-guided retrieval works; multi-turn state survives restart; concurrent same-thread turns are serialized; live-provider limitations are documented without silent parameter dropping.
 
 ### Phase 3 — Coding vertical slice
 
-Implement leased runs/jobs, local Docker executor, mock then real Codex harness, independent checks, cancellation/timeouts, and mock draft PR publication.
+Implement leased runs/jobs, immutable skill locks as job inputs, frozen runner-bootstrap installation,
+local Docker executor, mock then real Codex harness, independent checks, cancellation/timeouts, and
+mock draft PR publication.
 
 Exit: `diagnose-and-fix` fixes a fixture idempotency defect using a retrieved ADR, passes its regression test and supervisor checks, and returns a structured draft PR result. A crash after submission does not create a duplicate job or publication.
 

@@ -1,0 +1,108 @@
+# Addendum: Git-Backed Skills and CLI Distribution
+
+Date: 2026-10-04
+Applies to: `team-agent-architecture-brief.md` and `team-agent-architecture-brief-genkit.md`
+Status: Implementation requirements; commands are proposed interfaces.
+
+## Purpose and decisions
+
+Add a Python CLI command that downloads selected skills or the full authorized catalog for coding runners, local developers, and automations. Keep canonical skill packages in Git and build discovery metadata in memory in the context service. MongoDB remains responsible for runtime records, shared memory, and knowledge indexes; it is not required to hold a skill catalog.
+
+This addendum replaces any earlier requirement to persist available skill definitions in MongoDB. Existing `list_team_skills` and `get_team_skill` agent tools remain available and use the Git-backed catalog. Downloading skills and selecting which instructions an agent receives are separate operations.
+
+## Git-backed skill catalog and CLI distribution
+
+The context service scans approved skill packages from a pinned Git checkout or image-bundled content at startup. Validate frontmatter, package names, referenced files, and catalog consistency; build the discovery index in memory. Skill content and catalog metadata are rebuildable from Git, not authoritative MongoDB records.
+
+Implement these project CLI commands:
+
+```bash
+# Inspect the catalog without installing packages.
+team-agent skills list --project safety-platform
+
+# Pull one or several selected skills into a project-local directory.
+team-agent skills pull review-merge-request diagnose-and-fix \
+  --project safety-platform --dest .team-agent/skills
+
+# Pull the complete catalog authorized for this project and caller.
+team-agent skills pull --all \
+  --project safety-platform --dest .team-agent/skills
+
+# Install selected skills into a harness-specific project format.
+team-agent skills pull review-merge-request \
+  --project safety-platform --target claude --project-root .
+
+# Reproduce exactly the packages selected for a coding job or workflow.
+team-agent skills pull --lock /job/input/skills.lock.json \
+  --dest /workspace/.team-agent/skills --frozen --non-interactive
+```
+
+These commands are proposed application interfaces, not Genkit built-ins. Use the same Python SkillClient/SkillInstaller underneath the CLI and executor, so services need not spawn a CLI subprocess.
+
+Exactly one selection mode is required: named skills, `--all`, or `--lock`. `--revision` optionally selects an available immutable Git revision; without it, resolve the currently approved catalog once per pull. `--all` means the full authorized catalog for the supplied scope, not every company skill. It does not automatically enable every downloaded skill for every agent.
+
+`skills:resolve` accepts a selection and project scope and returns a manifest pinned to an immutable catalog revision. Entries include skill name, package ID, source revision, file hashes, description, resource inventory, dependencies, and schema version. Package endpoints serve those exact revisions. Authentication and scope enforcement use the context service, and no client receives MongoDB credentials.
+
+Download the full selected package, including references and scripts. Resolve declared skill dependencies with cycle detection and the same access checks. Fetch into a temporary directory, validate hashes and safe relative paths, and atomically install each package. Do not execute downloaded scripts during installation.
+
+Write `skills.lock.json` beside the installed catalog with selected package identities and hashes. `--frozen` uses only the supplied lock, rejects missing or mismatched packages, and never substitutes latest. Retain immutable packages for the supported job/retry lifetime. A valid local cache may satisfy a locked pull; unverified or missing data is an error.
+
+Default pulls update CLI-managed packages only. Preserve user-authored files and unselected packages. Keep an ownership manifest and reject collisions with unmanaged files. An explicit future `--prune` option may remove only owned packages excluded from the resolved selection. Fail nonzero with actionable errors; support `--json` output for automation, and keep credentials out of arguments and manifests.
+
+`--target` supports `generic`, `codex`, and `claude`; default to generic. Harness adapters produce the supported project-scoped layout for their pinned versions, keeping original package provenance. Do not install into global user directories by default. Validate actual harness discovery behavior in integration tests rather than assuming a downloaded directory is automatically recognized.
+
+## Consumers and startup behavior
+
+| Consumer | Skill access |
+|---|---|
+| Context service | Reads Git files and serves metadata and immutable packages |
+| Genkit coordinator/specialists | Discover/load through context tools; selected revision recorded per run |
+| Coding executor | Resolves selected skills when creating a job; stores its lock as a job input |
+| Disposable runner | Runs frozen pull during bootstrap, before launching Codex/Claude |
+| Local developer | Runs targeted or all pull, optionally selecting a harness target |
+| Automation | Declares skill names; resolves them when creating each workflow run |
+| CLI/offline development | Uses installed packages and a verified lock/cache |
+
+An automation definition may pin a catalog revision or use the latest approved revision at run creation. Every run then freezes its own lock, and retries reuse that lock. Automations invoke the shared Python resolution service; their runners use the same pull command.
+
+Only one component needs to download packages for each coding job: either the executor stages a verified bundle or the runner pulls its locked packages at startup. Prefer runner bootstrap when it has context-service access; use executor staging in network-restricted environments. Required skills must be installed successfully before coding starts. The runner bootstrap selects the harness target or invokes the corresponding installer before harness launch.
+
+For EKS, this bootstrap can run in the runner entrypoint or an init container with a shared workspace volume. It receives scoped service credentials and the immutable job lock. No dynamic edits to the deployment chart are needed for skill selection.
+
+## Required context-service endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/skills` | List authorized skill metadata |
+| `GET /v1/skills/{name}` | Load skill instructions at a requested available revision |
+| `POST /v1/skills:resolve` | Resolve named/all selection to an immutable package manifest |
+| `GET /v1/skill-packages/{package_id}` | Download the exact authorized package |
+
+Immutable package IDs do not bypass authorization. Preserve historical packages for active jobs and supported retries. If a required revision is unavailable, report failure instead of substituting newer content.
+
+## Implementation changes
+
+1. Add a `SkillCatalog` interface and a Git/filesystem implementation that scans validated packages into an in-memory metadata index.
+2. Add authenticated resolution and immutable package-download endpoints to the context service.
+3. Add Python `SkillClient`, `SkillInstaller`, and versioned lock/manifest contracts.
+4. Implement `team-agent skills list` and `team-agent skills pull`, including selection, destination, revision, target, frozen, non-interactive, and JSON-output options.
+5. Add executor resolution and runner bootstrap installation before harness launch. Persist the skill lock in the coding job's inputs.
+6. Add named skill selections and optional pinned catalog revisions to automation definitions.
+7. Add project-scoped Codex and Claude installation adapters; verify actual harness discovery for pinned versions.
+8. Remove any mandatory MongoDB skill-catalog collection or synchronization requirement. Keep run records of skill identities, revisions, and hashes for provenance.
+
+Do not require Genkit-specific types in these interfaces. The same skill distribution services must work for local developers without the hosted coordinator.
+
+## Acceptance criteria
+
+- A targeted pull installs only selected packages and their authorized declared dependencies.
+- An all pull returns only the caller's authorized project catalog.
+- Full packages include referenced resources and scripts; installation executes no scripts.
+- Interrupted or invalid downloads do not replace a valid installed package.
+- Hash mismatch, unsafe paths, dependency cycles, unavailable revisions, and unmanaged-file collisions fail clearly.
+- Frozen pulls reproduce the locked packages and never resolve latest.
+- An automation retry uses the original run's lock even after a new skill deployment.
+- Required skill installation failure prevents coding-harness startup.
+- Project-scoped Codex and Claude adapters pass discovery fixtures and live integration checks when the harness is available.
+- Genkit tools, the CLI, and runner bootstrap enforce the same access rules.
+- No MongoDB connection is needed to discover or download skills from the context service's Git-backed catalog.

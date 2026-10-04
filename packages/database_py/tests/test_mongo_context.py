@@ -6,10 +6,9 @@ from team_agent_contracts import (
     Citation,
     KnowledgeSearchRequest,
     Principal,
-    SkillListRequest,
 )
-from team_agent_database import MongoContextRepository, MongoKnowledgeIndex, MongoSkillCatalog
-from team_context_core import KnowledgeChunk, SkillPackage
+from team_agent_database import MongoContextRepository, MongoKnowledgeIndex
+from team_context_core import KnowledgeChunk
 
 
 class _Cursor:
@@ -38,17 +37,6 @@ class _Chunks:
     def find(self, query: dict[str, Any]) -> _Cursor:
         self.query = query
         return _Cursor(self._documents)
-
-
-class _Skills(_Chunks):
-    def find(self, query: dict[str, Any]) -> _Cursor:
-        self.query = query
-        matches = [document for document in self._documents if _matches(document, query)]
-        return _Cursor(matches)
-
-    async def find_one(self, query: dict[str, Any]) -> dict[str, Any] | None:
-        self.query = query
-        return next((document for document in self._documents if _matches(document, query)), None)
 
 
 def _matches(document: dict[str, Any], query: dict[str, Any]) -> bool:
@@ -88,6 +76,15 @@ class _MigrationCollection:
         document = self.documents.setdefault(query["_id"], {"_id": query["_id"]})
         document.update(update.get("$setOnInsert", {}))
         document.update(update.get("$set", {}))
+        for key in update.get("$unset", {}):
+            document.pop(key, None)
+
+    async def update_many(self, query: dict[str, Any], update: dict[str, Any]) -> None:
+        for document in self.documents.values():
+            if _matches(document, query):
+                document.update(update.get("$set", {}))
+                for key in update.get("$unset", {}):
+                    document.pop(key, None)
 
     async def replace_one(
         self, query: dict[str, Any], replacement: dict[str, Any], *, upsert: bool = False
@@ -136,6 +133,10 @@ class _MigrationDatabase:
         self.collections[name] = _MigrationCollection()
         self.validators[name] = validator
 
+    async def command(self, command: dict[str, Any]) -> dict[str, int]:
+        self.validators[command["collMod"]] = command["validator"]
+        return {"ok": 1}
+
     def __getitem__(self, name: str) -> _MigrationCollection:
         return self.collections[name]
 
@@ -177,116 +178,6 @@ def test_search_filters_storage_candidates_before_scoring() -> None:
     assert results[0].citation.revision == "abc123"
 
 
-def test_skill_catalog_filters_storage_before_listing_or_loading() -> None:
-    documents = [
-        {
-            "_id": "sample:skills/diagnose/SKILL.md",
-            "source_id": "sample",
-            "name": "diagnose",
-            "description": "Diagnose an incident",
-            "version": "1",
-            "projects": ["event-ingestion"],
-            "access_groups": ["engineering"],
-            "allowed_tools": ["search_team_knowledge"],
-            "body": "# Diagnose",
-            "citation": {
-                "repository": "sample",
-                "path": "skills/diagnose/SKILL.md",
-                "revision": "abc123",
-            },
-        }
-    ]
-    collection = _Skills(documents)
-    catalog = MongoSkillCatalog(collection, source_id="sample")
-    principal = Principal(id="dev", groups=["engineering"], projects=["event-ingestion"])
-
-    items, next_cursor = asyncio.run(
-        catalog.list(SkillListRequest(project="event-ingestion", limit=10), principal)
-    )
-
-    assert collection.query == {
-        "source_id": "sample",
-        "projects": "event-ingestion",
-        "access_groups": {"$in": ["engineering"]},
-    }
-    assert [item.name for item in items] == ["diagnose"]
-    assert next_cursor is None
-
-    detail = asyncio.run(catalog.get("diagnose", "event-ingestion", principal))
-    assert collection.query == {
-        "source_id": "sample",
-        "name": "diagnose",
-        "projects": "event-ingestion",
-        "access_groups": {"$in": ["engineering"]},
-    }
-    assert detail is not None
-    assert detail.body == "# Diagnose"
-    assert detail.citation.revision == "abc123"
-
-
-def test_skill_catalog_binding_prevents_cross_source_list_get_and_cursor_reuse() -> None:
-    def skill(source: str, name: str, revision: str) -> SkillPackage:
-        return SkillPackage(
-            id=f"{source}:skills/{name}/SKILL.md",
-            name=name,
-            description=f"{source} {name}",
-            version="1",
-            projects=["event-ingestion"],
-            access_groups=["engineering"],
-            allowed_tools=[],
-            body=f"# {name.title()}",
-            citation=Citation(
-                repository=source,
-                path=f"skills/{name}/SKILL.md",
-                revision=revision,
-            ),
-        )
-
-    database = _MigrationDatabase()
-    repository = MongoContextRepository(database)
-    asyncio.run(repository.migrate())
-    asyncio.run(
-        repository.synchronize(
-            "source-a", "a-revision", [], [skill("source-a", "alpha", "a-revision")]
-        )
-    )
-    asyncio.run(
-        repository.synchronize(
-            "source-b",
-            "b-revision",
-            [],
-            [
-                skill("source-b", "bravo", "b-revision"),
-                skill("source-b", "charlie", "b-revision"),
-            ],
-        )
-    )
-    collection = database.collections["skills"]
-    source_a = MongoSkillCatalog(collection, source_id="source-a")
-    source_b = MongoSkillCatalog(collection, source_id="source-b")
-    principal = Principal(id="dev", groups=["engineering"], projects=["event-ingestion"])
-
-    source_a_items, _ = asyncio.run(
-        source_a.list(SkillListRequest(project="event-ingestion"), principal)
-    )
-    source_b_first, source_b_cursor = asyncio.run(
-        source_b.list(SkillListRequest(project="event-ingestion", limit=1), principal)
-    )
-    cross_source_items, _ = asyncio.run(
-        source_a.list(
-            SkillListRequest(project="event-ingestion", limit=1, cursor=source_b_cursor),
-            principal,
-        )
-    )
-    source_b_detail = asyncio.run(source_a.get("bravo", "event-ingestion", principal))
-
-    assert [item.name for item in source_a_items] == ["alpha"]
-    assert [item.name for item in source_b_first] == ["bravo"]
-    assert source_b_cursor is not None
-    assert cross_source_items == []
-    assert source_b_detail is None
-
-
 def test_migration_creates_validated_context_collections_and_indexes() -> None:
     database = _MigrationDatabase()
     repository = MongoContextRepository(database)
@@ -297,7 +188,6 @@ def test_migration_creates_validated_context_collections_and_indexes() -> None:
         "document_chunks",
         "documents",
         "schema_migrations",
-        "skills",
         "source_revisions",
     }
     assert set(database.validators) == set(database.collections)
@@ -316,57 +206,44 @@ def test_migration_creates_validated_context_collections_and_indexes() -> None:
     assert database.collections["source_revisions"].indexes == [
         ([("source_id", 1), ("revision", 1)], "source_revision_unique", True)
     ]
-    assert database.collections["skills"].indexes == [
-        (
-            [("projects", 1), ("name", 1), ("_id", 1)],
-            "authorized_project_name",
-            False,
-        ),
-        (
-            [("access_groups", 1), ("name", 1), ("_id", 1)],
-            "authorized_group_name",
-            False,
-        ),
-        ([("source_id", 1), ("name", 1)], "source_skill_name_unique", True),
-        ([("source_id", 1), ("citation.revision", 1)], "skill_source_revision", False),
-    ]
 
 
-def test_synchronize_persists_and_prunes_revision_pinned_skills() -> None:
+def test_migration_upgrades_all_v2_revisions_without_using_legacy_skills() -> None:
     database = _MigrationDatabase()
     repository = MongoContextRepository(database)
     asyncio.run(repository.migrate())
-    old = SkillPackage(
-        id="sample:skills/old/SKILL.md",
-        name="old",
-        description="Old skill",
-        version="1",
-        projects=["event-ingestion"],
-        access_groups=["engineering"],
-        allowed_tools=[],
-        body="# Old",
-        citation=Citation(repository="sample", path="skills/old/SKILL.md", revision="rev-1"),
-    )
-    current = old.model_copy(
-        update={
-            "id": "sample:skills/current/SKILL.md",
-            "name": "current",
-            "body": "# Current",
-            "citation": Citation(
-                repository="sample", path="skills/current/SKILL.md", revision="rev-2"
-            ),
-        }
-    )
+    revisions = database.collections["source_revisions"]
+    revisions.documents = {
+        "sample:rev-1": {
+            "_id": "sample:rev-1",
+            "schema_version": 2,
+            "source_id": "sample",
+            "revision": "rev-1",
+            "status": "ready",
+            "chunk_count": 1,
+            "skill_count": 2,
+        },
+        "sample:rev-2": {
+            "_id": "sample:rev-2",
+            "schema_version": 2,
+            "source_id": "sample",
+            "revision": "rev-2",
+            "status": "ready",
+            "chunk_count": 3,
+            "skill_count": 4,
+        },
+    }
+    legacy_skills = _MigrationCollection()
+    legacy_skills.documents["legacy"] = {"_id": "legacy", "body": "unused"}
+    database.collections["skills"] = legacy_skills
 
-    asyncio.run(repository.synchronize("sample", "rev-1", [], [old]))
-    asyncio.run(repository.synchronize("sample", "rev-2", [], [current]))
+    asyncio.run(repository.migrate())
 
-    assert set(database.collections["skills"].documents) == {current.id}
-    stored = database.collections["skills"].documents[current.id]
-    assert stored["body"] == "# Current"
-    assert stored["citation"]["revision"] == "rev-2"
-    revision = database.collections["source_revisions"].documents["sample:rev-2"]
-    assert revision["skill_count"] == 1
+    assert all(row["schema_version"] == 3 for row in revisions.documents.values())
+    assert all("skill_count" not in row for row in revisions.documents.values())
+    assert database.collections["skills"].documents == {
+        "legacy": {"_id": "legacy", "body": "unused"}
+    }
 
 
 def test_synchronize_replaces_source_content_and_records_ready_revision() -> None:
@@ -392,8 +269,8 @@ def test_synchronize_replaces_source_content_and_records_ready_revision() -> Non
         citation=Citation(repository="sample", path="current.md", revision="rev-2"),
     )
 
-    asyncio.run(repository.synchronize("sample", "rev-1", [old], []))
-    asyncio.run(repository.synchronize("sample", "rev-2", [current], []))
+    asyncio.run(repository.synchronize("sample", "rev-1", [old]))
+    asyncio.run(repository.synchronize("sample", "rev-2", [current]))
 
     assert set(database.collections["documents"].documents) == {"sample:current.md"}
     assert set(database.collections["document_chunks"].documents) == {"sample:current.md"}

@@ -18,7 +18,9 @@ Decisions:
 - Coordinator model is configurable. Gemini, Anthropic, and OpenAI model integrations may differ in capability; model agnostic does not mean identical feature behavior.
 - MongoDB cluster is the only required durable database. Use separate `agent_runtime` and `team_context` databases and credentials.
 - REST is the primary context-service interface; MCP and CLI adapt the same application services.
-- Git owns canonical knowledge, conventions, and skills. MongoDB owns indexes, runtime records, and dynamic memory.
+- Git owns canonical knowledge, conventions, and skills. Skill discovery is rebuilt in memory and
+  immutable packages are distributed through the context service. MongoDB owns knowledge indexes,
+  runtime records, and dynamic memory, not the skill catalog.
 - Codex is the initial coding harness. Claude Code is a later adapter behind the same contract.
 - Produce three images from a multi-stage Dockerfile: `company/team-agent`, `company/team-context`, and `company/coding-runner`.
 - Provide Dockerfiles and development Compose only. Do not add Kubernetes, ECS, Nomad, or production hosting manifests.
@@ -107,7 +109,11 @@ class AgentRuntime(Protocol):
     async def execute(self, request: AgentTurnRequest) -> AgentTurnResult: ...
 ```
 
-Requests include run ID, authenticated principal reference, conversation ID, objective, project/repository scope, context references, pinned skill revisions, and capability policy. Results include text, citations, structured decisions, usage, pending external jobs, and explicit status. Never serialize provider-specific state into public contracts without an opaque, versioned envelope.
+Requests include run ID, authenticated principal reference, conversation ID, objective,
+project/repository scope, context references, an immutable selected-skill lock, and capability policy.
+Results include text, citations, structured decisions, usage, pending external jobs, and explicit
+status. Never serialize provider-specific state into public contracts without an opaque, versioned
+envelope.
 
 `AdkRuntime` composes an `LlmAgent`, an ADK `Runner`, scoped function tools, skills, session services, and callbacks/plugins. Support these logical tools:
 
@@ -129,7 +135,10 @@ Implement a provider contract suite that checks multi-step tool calls, streamed 
 
 ### Skills
 
-Canonical skill packages remain Git-owned and provider neutral. Each contains trigger metadata, prerequisites, procedure, constraints, evidence requirements, and completion criteria. Use ADK `SkillToolset` through a small adapter to load compatible packages from a pinned checkout. Its experimental API must not leak into the context-service contracts.
+Canonical skill packages remain Git-owned and provider neutral. The context service scans a pinned
+checkout into memory, resolves authorized selections to immutable manifests, and serves complete
+hashed packages. The shared Python client/installer writes a frozen lock and bounded project
+projection for ADK or a coding harness. ADK's experimental types must not leak into these contracts.
 
 Advertise only authorized/relevant skill metadata; load full bodies and resources on demand. Record the revision used for a run. Keep discovery and resource reading separate from script execution. Scripts requiring repository access execute inside coding runners. Do not enable general script execution in the hosted coordinator merely because a skill contains scripts.
 
@@ -166,6 +175,8 @@ POST /v1/knowledge/search
 GET  /v1/documents/{id}
 GET  /v1/skills
 GET  /v1/skills/{name}
+POST /v1/skills:resolve
+GET  /v1/skill-packages/{package_id}
 POST /v1/memories/search
 POST /v1/memory-proposals
 POST /v1/memory-proposals/{id}/approve
@@ -243,7 +254,11 @@ class CodingJobExecutor(Protocol):
 
 Implement `LocalDockerExecutor`, `MockCodingHarness`, and then `CodexHarness`. Add `ClaudeHarness` after the first real path passes acceptance tests. Harness adapters may invoke the supported noninteractive CLI or SDK; select exact commands from current official documentation. The runner boundary remains regardless of invocation mechanism.
 
-Every request/result is schema-validated and versioned. A request includes `job_id`, `run_id`, submission idempotency key, repository, base/head revisions, objective, mode (`investigate`, `fix`, `review`, `integrate`), harness, pinned skill/content revisions, context references, and supervisor-owned capability policy. Policies include allowed repositories/paths/commands, may-edit/publish flags, timeout, diff limits, and resource limits.
+Every request/result is schema-validated and versioned. A request includes `job_id`, `run_id`,
+submission idempotency key, repository, base/head revisions, objective, mode (`investigate`, `fix`,
+`review`, `integrate`), harness, an immutable skill lock, pinned content revision, context references,
+and supervisor-owned capability policy. Policies include allowed repositories/paths/commands,
+may-edit/publish flags, timeout, diff limits, and resource limits.
 
 Results include terminal status, diagnosis, evidence, findings, patch reference, changed files, harness-reported checks, independent verification, exact reviewed SHA, publication outcome, usage, and memory proposals. Findings include severity, path/line reference, explanation, evidence, and suggested action.
 
@@ -276,7 +291,10 @@ Emoji is a projection, not the authority. Internal review records establish comp
 
 `agent_runtime`: identities, slack_threads, sessions, session_events, runs, workflow_steps, coding_jobs, action_intents, approvals, event_receipts, automations, automation_runs, code_reviews, review_projections.
 
-`team_context`: documents, document_chunks, source_revisions, skills, memories, memory_proposals, audit_events.
+`team_context`: documents, document_chunks, source_revisions, memories, memory_proposals, audit_events.
+
+Skill packages and discovery metadata are rebuildable from Git rather than stored in MongoDB. Run
+records retain selected identities, immutable revisions, and hashes for provenance and retry.
 
 Only the context service accesses `team_context`. Local agents receive no MongoDB credentials. Use collection validators and explicit schema migrations.
 
@@ -304,9 +322,15 @@ Provide `.env.example` with placeholders and safe mock mode. Default local demos
 
 ### Phase 1 — Foundation and extension
 
-Create Python workspace, contracts, mock clients, MongoDB repositories/indexes, context REST service, development Compose, image targets, and fixture knowledge/skills. Implement authenticated cited retrieval, memory proposals, MCP and context CLI, and project-scoped local-agent examples.
+Create the Python workspace, contracts, mock clients, MongoDB knowledge repositories/indexes,
+context REST service, development Compose, image targets, and fixture knowledge/skills. Implement
+authenticated cited retrieval, the Git-backed skill catalog, immutable package resolution,
+verified pull/lock installation, memory proposals, MCP/context CLI, and project-scoped local-agent
+adapters.
 
-Exit: all images build; authorized REST/MCP/CLI retrieval agrees; denied scope never returns chunks; source revisions and memory provenance are preserved.
+Exit: all images build; authorized REST/MCP/CLI retrieval agrees; targeted/all/frozen pulls are
+atomic and reproducible; denied scope never returns chunks or packages; source revisions, skill
+locks, and memory provenance are preserved.
 
 ### Phase 2 — ADK coordinator and conversations
 

@@ -130,7 +130,9 @@ def decode_skill_cursor(cursor: str, project: str) -> str:
     return payload["after"]
 
 
-class InMemorySkillCatalog:
+class GitSkillCatalog:
+    """Authorized catalog built from skill packages scanned from a pinned Git checkout."""
+
     def __init__(self, skills: Sequence[SkillPackage]) -> None:
         self._skills = tuple(skills)
 
@@ -199,8 +201,8 @@ class InMemorySkillCatalog:
 
 
 __all__ = [
+    "GitSkillCatalog",
     "InMemoryKnowledgeIndex",
-    "InMemorySkillCatalog",
     "InvalidSkillCursor",
     "KnowledgeChunk",
     "KnowledgeIndex",

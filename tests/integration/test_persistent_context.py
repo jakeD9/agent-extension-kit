@@ -13,9 +13,8 @@ from team_agent_database import (
     KnowledgeChunkCollection,
     MongoContextRepository,
     MongoKnowledgeIndex,
-    MongoSkillCatalog,
-    SkillCollection,
 )
+from team_context_core import GitSkillCatalog
 from team_context_service import load_content_pack
 
 EXTENSION_PATH = Path(__file__).parents[2] / "extension"
@@ -43,7 +42,7 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
             skill.model_copy(update={"id": f"{source_id}:{skill.id}", "projects": [source_id]})
             for skill in pack.skills
         ]
-        await repository.synchronize(source_id, "integration-revision", chunks, skills)
+        await repository.synchronize(source_id, "integration-revision", chunks)
         await first.close()
 
         restarted: AsyncMongoClient[dict[str, Any]] = AsyncMongoClient(
@@ -70,9 +69,7 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
         )
         assert denied == []
 
-        skill_catalog = MongoSkillCatalog(
-            cast(SkillCollection, restarted_database["skills"]), source_id=source_id
-        )
+        skill_catalog = GitSkillCatalog(skills)
         listed_skills, next_cursor = await skill_catalog.list(
             SkillListRequest(project=source_id),
             Principal(id="integration", groups=["engineering"], projects=[source_id]),
@@ -99,7 +96,6 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
 
         await restarted_database["documents"].delete_many({"source_id": source_id})
         await restarted_database["document_chunks"].delete_many({"source_id": source_id})
-        await restarted_database["skills"].delete_many({"source_id": source_id})
         await restarted_database["source_revisions"].delete_many({"source_id": source_id})
         await restarted.close()
 

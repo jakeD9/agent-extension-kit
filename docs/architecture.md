@@ -8,9 +8,10 @@ hosted orchestration runtime, initially through an explicit OpenAI model configu
 and Claude integrations remain independent of Genkit.
 
 Migration proceeds as verified vertical slices. The current implementation is S03: a Python context
-service that validates a Git-owned extension pack, synchronizes knowledge and skills at a pinned
-revision into MongoDB, and provides authenticated, cited REST search plus authorized skill list/get
-operations. CLI/MCP, Genkit, coding jobs, Slack, and automation are not yet implemented.
+service that validates a Git-owned extension pack, synchronizes only its knowledge index at a pinned
+revision into MongoDB, builds its skill catalog in memory, and provides authenticated cited search
+plus authorized skill list/get operations. Package resolution/pull, CLI/MCP, Genkit, coding jobs,
+Slack, and automation are not yet implemented.
 
 ## Runtime boundaries
 
@@ -31,15 +32,15 @@ authorization, durable execution, validation, and external side effects.
 
 - Git owns approved knowledge, skills, conventions, and architecture decisions.
 - The `team_context` MongoDB database owns derived knowledge indexes and source revision state; it
-  will also own governed memories and context audit.
+  will also own governed memories and context audit. It does not own the skill catalog.
 - The `agent_runtime` MongoDB database will own conversations, Genkit snapshots/state, workflows, jobs,
   approvals, automations, reviews, and projections.
 - The databases use distinct service credentials. Only the context service can access `team_context`.
 - Local agents and coding runners receive no MongoDB credentials.
 
 The in-memory knowledge index remains available for tests and mock mode. Production startup uses the
-MongoDB adapter, applies strict validators/indexes, and synchronizes the configured content revision
-without changing the knowledge-service contract.
+MongoDB knowledge adapter, applies strict validators/indexes, synchronizes the configured knowledge
+revision, and independently builds the skill catalog from the validated Git/filesystem content pack.
 
 ## Extension and retrieval invariants
 
@@ -48,18 +49,21 @@ Every returned knowledge item carries repository, path, revision, and optional h
 group, and authority filters are applied before scoring. Repository content is untrusted input and
 cannot grant tool authority.
 
-Skill metadata must reference projects and access groups declared by the extension manifest. Skill
-catalog adapters are bound to the configured extension source, and source/project/group
-authorization is applied before pagination and body retrieval. Absent and unauthorized names share
-one not-found response. Skill bodies retain repository/path/revision provenance.
+Skill metadata must reference projects and access groups declared by the extension manifest. The Git
+skill catalog is bound to the configured extension checkout, and project/group authorization is
+applied before pagination and body retrieval. Absent and unauthorized names share one not-found
+response. Skill bodies retain repository/path/revision provenance. Complete-package resolution,
+hashing, dependency closure, lockfiles, and atomic installation are specified by the skills
+distribution addendum and begin in S04; they are not Genkit built-ins.
 
 REST is the primary context interface. MCP and CLI will adapt the same application services and
 policy decisions. Genkit-specific types stay inside `runtime_genkit`.
 
-Git-owned team skills remain provider neutral. The runtime resolves and pins an authorized subset
-through the context service before projecting it into Genkit Skills middleware. The checked-in
-`developing-genkit-python` agent skill guides repository development only; it does not grant hosted
-runtime capabilities.
+Git-owned team skills remain provider neutral. The shared `SkillClient` resolves an authorized subset
+to an immutable lock and installs a bounded projection before the runtime points Genkit Skills
+middleware at it. Coding runners use the same lock and installer with a harness target. The
+checked-in `developing-genkit-python` agent skill guides repository development only; it does not
+grant hosted runtime capabilities.
 
 ## Operational invariants
 

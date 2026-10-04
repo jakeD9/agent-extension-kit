@@ -2,9 +2,9 @@
 
 ## Status
 
-S03 implements the persistent knowledge and authorized skill-catalog boundary in `team_context`.
-Collections marked S02 or S03 have strict JSON Schema validators and migration-owned indexes;
-later collections remain target design.
+S03 keeps persistent knowledge in `team_context` while rebuilding the authorized skill catalog from
+the pinned Git/filesystem content pack. Collections marked S02 have strict JSON Schema validators and
+migration-owned indexes; later collections remain target design.
 
 ## `team_context`
 
@@ -16,7 +16,6 @@ Owned exclusively by the context service:
 | `document_chunks` | **S02.** Authorized searchable chunks with revision-pinned citations. |
 | `source_revisions` | **S02.** Synchronization status, pinned revision, count, and failure state. |
 | `schema_migrations` | **S02.** Applied context schema versions. |
-| `skills` | **S03.** Authorized metadata and bodies derived from revision-pinned Git skill packages. |
 | `memories` | Approved, scoped memories with provenance, expiry, and supersession. |
 | `memory_proposals` | Candidate memories and authorized review history. |
 | `audit_events` | Append-only context authorization and mutation decisions. |
@@ -52,8 +51,10 @@ scoring, plus source/revision for provenance inspection. `(source_id, revision)`
 `source_revisions`. Synchronization is idempotent, prunes stale source documents/chunks, records
 failed attempts, and is retried during readiness recovery.
 
-S03 indexes `skills` for source/project/group authorization and stable name/ID traversal, enforces
-one skill name per source, and records source/revision provenance in every record. Mongo skill
-catalog adapters are bound to one configured source and include it in every list/get query. The same
-source synchronization prunes stale skills and records both knowledge-chunk and skill counts before
-the revision is considered ready.
+Skill packages are not a MongoDB collection. The context service validates the pinned Git checkout
+at startup, builds an in-memory authorized catalog, and can rebuild it without database state. Mongo
+source-revision readiness records knowledge synchronization only. A deployment upgraded from the
+superseded S03 design may retain an unused legacy `skills` collection until an operator removes it;
+the service no longer creates, queries, synchronizes, or requires that collection. The v3 migration
+upgrades every historical source-revision row and removes its obsolete `skill_count` field before
+recording the migration.
