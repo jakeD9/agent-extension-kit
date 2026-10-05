@@ -17,6 +17,16 @@ from team_agent_contracts import (
     ErrorResponse,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    MemoryAuditListRequest,
+    MemoryAuditResponse,
+    MemoryDecisionRequest,
+    MemoryDecisionResponse,
+    MemoryMutationResponse,
+    MemoryProposalCreateRequest,
+    MemoryProposalResponse,
+    MemorySearchRequest,
+    MemorySearchResponse,
+    Principal,
     SkillGetRequest,
     SkillGetResponse,
     SkillListRequest,
@@ -28,9 +38,15 @@ from team_agent_contracts import (
 )
 from team_context_core import (
     GitSkillCatalog,
+    GovernedMemory,
+    InMemoryGovernedMemory,
     InMemoryKnowledgeIndex,
+    InvalidMemoryCursor,
     InvalidSkillCursor,
     KnowledgeIndex,
+    MemoryConflictError,
+    MemoryForbiddenError,
+    MemoryNotFoundError,
     SkillCatalog,
     SkillNotFoundError,
     SkillRevisionNotFoundError,
@@ -48,6 +64,7 @@ class AppDependencies:
     authenticator: Authenticator
     knowledge_index: KnowledgeIndex | None = None
     skill_catalog: SkillCatalog | None = None
+    governed_memory: GovernedMemory | None = None
     readiness: Readiness | None = None
     startup: LifecycleHook | None = None
     shutdown: LifecycleHook | None = None
@@ -74,6 +91,7 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
     skills = dependencies.skill_catalog or GitSkillCatalog(
         dependencies.pack.skills, dependencies.pack.revision
     )
+    memories = dependencies.governed_memory or InMemoryGovernedMemory()
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -290,6 +308,314 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
                 404,
             )
         response = SkillPackageResponse(**bundle.model_dump(), request_id=request.state.request_id)
+        return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
+
+    async def authenticated(
+        authorization: str | None, request: Request
+    ) -> tuple[Principal | None, JSONResponse | None]:
+        principal = await dependencies.authenticator.authenticate(authorization)
+        if principal is None:
+            return None, _error(
+                "unauthorized",
+                "A valid bearer token is required",
+                request.state.request_id,
+                401,
+            )
+        return principal, None
+
+    def validate_idempotency(value: str | None, request: Request) -> JSONResponse | None:
+        if value is None or not (1 <= len(value) <= 256):
+            return _error(
+                "validation_failed",
+                "A bounded Idempotency-Key header is required",
+                request.state.request_id,
+                422,
+            )
+        return None
+
+    @app.post(
+        "/v1/memory-proposals",
+        status_code=201,
+        response_model=MemoryProposalResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {"schema": MemoryProposalCreateRequest.model_json_schema()}
+                },
+            }
+        },
+    )
+    async def propose_memory(
+        body: Annotated[object, Body()],
+        request: Request,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None),
+    ) -> JSONResponse:
+        principal, auth_error = await authenticated(authorization, request)
+        if auth_error is not None:
+            return auth_error
+        if (header_error := validate_idempotency(idempotency_key, request)) is not None:
+            return header_error
+        try:
+            proposal_request = MemoryProposalCreateRequest.model_validate(body)
+        except ValidationError:
+            return _error(
+                "validation_failed", "The memory proposal is invalid", request.state.request_id, 422
+            )
+        try:
+            assert principal is not None and idempotency_key is not None
+            proposal = await memories.propose(proposal_request, principal, idempotency_key)
+        except MemoryForbiddenError:
+            return _error(
+                "forbidden",
+                "The caller cannot propose memory for this scope",
+                request.state.request_id,
+                403,
+            )
+        except MemoryConflictError:
+            return _error(
+                "memory_conflict", "The memory operation conflicts", request.state.request_id, 409
+            )
+        response = MemoryProposalResponse(proposal=proposal, request_id=request.state.request_id)
+        return JSONResponse(
+            status_code=201,
+            content=response.model_dump(mode="json", exclude_none=True),
+            headers={"location": f"/v1/memory-proposals/{proposal.id}"},
+        )
+
+    async def decide_memory(
+        proposal_id: str,
+        body: object,
+        request: Request,
+        authorization: str | None,
+        idempotency_key: str | None,
+        *,
+        approve: bool,
+    ) -> JSONResponse:
+        principal, auth_error = await authenticated(authorization, request)
+        if auth_error is not None:
+            return auth_error
+        if (header_error := validate_idempotency(idempotency_key, request)) is not None:
+            return header_error
+        if not proposal_id or len(proposal_id) > 128:
+            return _error(
+                "validation_failed",
+                "The memory proposal id is invalid",
+                request.state.request_id,
+                422,
+            )
+        try:
+            decision_request = MemoryDecisionRequest.model_validate(body)
+        except ValidationError:
+            return _error(
+                "validation_failed", "The memory decision is invalid", request.state.request_id, 422
+            )
+        try:
+            assert principal is not None and idempotency_key is not None
+            result = await memories.decide(
+                proposal_id,
+                decision_request,
+                principal,
+                idempotency_key,
+                approve=approve,
+            )
+        except MemoryNotFoundError:
+            return _error(
+                "memory_proposal_not_found",
+                "Memory proposal not found",
+                request.state.request_id,
+                404,
+            )
+        except MemoryForbiddenError:
+            return _error(
+                "forbidden",
+                "The caller cannot decide memory proposals",
+                request.state.request_id,
+                403,
+            )
+        except MemoryConflictError:
+            return _error(
+                "memory_conflict", "The memory operation conflicts", request.state.request_id, 409
+            )
+        return JSONResponse(
+            content=result.model_copy(update={"request_id": request.state.request_id}).model_dump(
+                mode="json", exclude_none=True
+            )
+        )
+
+    @app.post(
+        "/v1/memory-proposals/{proposal_id}/approve",
+        response_model=MemoryDecisionResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {"schema": MemoryDecisionRequest.model_json_schema()}
+                },
+            }
+        },
+    )
+    async def approve_memory(
+        proposal_id: str,
+        body: Annotated[object, Body()],
+        request: Request,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None),
+    ) -> JSONResponse:
+        return await decide_memory(
+            proposal_id, body, request, authorization, idempotency_key, approve=True
+        )
+
+    @app.post(
+        "/v1/memory-proposals/{proposal_id}/reject",
+        response_model=MemoryDecisionResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {"schema": MemoryDecisionRequest.model_json_schema()}
+                },
+            }
+        },
+    )
+    async def reject_memory(
+        proposal_id: str,
+        body: Annotated[object, Body()],
+        request: Request,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None),
+    ) -> JSONResponse:
+        return await decide_memory(
+            proposal_id, body, request, authorization, idempotency_key, approve=False
+        )
+
+    @app.post(
+        "/v1/memories/search",
+        response_model=MemorySearchResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {"schema": MemorySearchRequest.model_json_schema()}
+                },
+            }
+        },
+    )
+    async def search_memories(
+        body: Annotated[object, Body()],
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> JSONResponse:
+        principal, auth_error = await authenticated(authorization, request)
+        if auth_error is not None:
+            return auth_error
+        try:
+            search_request = MemorySearchRequest.model_validate(body)
+            assert principal is not None
+            items, next_cursor = await memories.search(search_request, principal)
+        except (ValidationError, InvalidMemoryCursor):
+            return _error(
+                "validation_failed", "The memory search is invalid", request.state.request_id, 422
+            )
+        response = MemorySearchResponse(
+            items=items, next_cursor=next_cursor, request_id=request.state.request_id
+        )
+        return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
+
+    @app.post(
+        "/v1/memories/{memory_id}/expire",
+        response_model=MemoryMutationResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {"schema": MemoryDecisionRequest.model_json_schema()}
+                },
+            }
+        },
+    )
+    async def expire_memory(
+        memory_id: str,
+        body: Annotated[object, Body()],
+        request: Request,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None),
+    ) -> JSONResponse:
+        principal, auth_error = await authenticated(authorization, request)
+        if auth_error is not None:
+            return auth_error
+        if (header_error := validate_idempotency(idempotency_key, request)) is not None:
+            return header_error
+        if not memory_id or len(memory_id) > 128:
+            return _error(
+                "validation_failed", "The memory id is invalid", request.state.request_id, 422
+            )
+        try:
+            decision_request = MemoryDecisionRequest.model_validate(body)
+        except ValidationError:
+            return _error(
+                "validation_failed",
+                "The memory expiration is invalid",
+                request.state.request_id,
+                422,
+            )
+        try:
+            assert principal is not None and idempotency_key is not None
+            result = await memories.expire(
+                memory_id,
+                decision_request,
+                principal,
+                idempotency_key,
+            )
+        except MemoryNotFoundError:
+            return _error("memory_not_found", "Memory not found", request.state.request_id, 404)
+        except MemoryForbiddenError:
+            return _error(
+                "forbidden", "The caller cannot expire memory", request.state.request_id, 403
+            )
+        except MemoryConflictError:
+            return _error(
+                "memory_conflict", "The memory operation conflicts", request.state.request_id, 409
+            )
+        response = MemoryMutationResponse(memory=result.memory, request_id=request.state.request_id)
+        return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
+
+    @app.get(
+        "/v1/memory-proposals/{proposal_id}/audit",
+        response_model=MemoryAuditResponse,
+    )
+    async def list_memory_audit(
+        proposal_id: str,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> JSONResponse:
+        principal, auth_error = await authenticated(authorization, request)
+        if auth_error is not None:
+            return auth_error
+        try:
+            audit_request = MemoryAuditListRequest.model_validate(
+                {**dict(request.query_params), "proposal_id": proposal_id}
+            )
+            assert principal is not None
+            items, next_cursor = await memories.audit(audit_request, principal)
+        except (ValidationError, InvalidMemoryCursor):
+            return _error(
+                "validation_failed",
+                "The memory audit request is invalid",
+                request.state.request_id,
+                422,
+            )
+        except MemoryNotFoundError:
+            return _error(
+                "memory_proposal_not_found",
+                "Memory proposal not found",
+                request.state.request_id,
+                404,
+            )
+        response = MemoryAuditResponse(
+            items=items, next_cursor=next_cursor, request_id=request.state.request_id
+        )
         return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
 
     return app

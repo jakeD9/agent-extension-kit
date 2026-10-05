@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from team_context_core import KnowledgeChunk
@@ -41,11 +41,13 @@ class MongoContextBackend:
         database: ContextDatabase,
         repository: _Repository,
         pack: ContentPack,
+        transaction_verifier: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._client = client
         self._database = database
         self._repository = repository
         self._pack = pack
+        self._transaction_verifier = transaction_verifier
         self._initialized = False
         self._initialization_lock = asyncio.Lock()
 
@@ -60,6 +62,8 @@ class MongoContextBackend:
             try:
                 await self._database.command({"ping": 1})
                 await self._repository.migrate()
+                if self._transaction_verifier is not None:
+                    await self._transaction_verifier()
                 await self._repository.synchronize(
                     self._pack.manifest.id,
                     self._revision,

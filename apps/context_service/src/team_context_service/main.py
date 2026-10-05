@@ -10,6 +10,7 @@ from team_agent_auth import StaticBearerAuthenticator
 from team_agent_database import (
     KnowledgeChunkCollection,
     MongoContextRepository,
+    MongoGovernedMemory,
     MongoKnowledgeIndex,
 )
 from team_context_core import GitSkillCatalog
@@ -36,10 +37,18 @@ def create_app_from_env() -> FastAPI:
         mongo_uri,
         serverSelectionTimeoutMS=5_000,
         server_api=ServerApi("1"),
+        tz_aware=True,
     )
     database = client[database_name]
     repository = MongoContextRepository(database)
-    backend = MongoContextBackend(client, cast(ContextDatabase, database), repository, pack)
+    governed_memory = MongoGovernedMemory(database)
+    backend = MongoContextBackend(
+        client,
+        cast(ContextDatabase, database),
+        repository,
+        pack,
+        transaction_verifier=governed_memory.verify_transactions,
+    )
     knowledge_index = MongoKnowledgeIndex(
         cast(KnowledgeChunkCollection, database["document_chunks"])
     )
@@ -50,6 +59,7 @@ def create_app_from_env() -> FastAPI:
             authenticator=StaticBearerAuthenticator.from_json(principals),
             knowledge_index=knowledge_index,
             skill_catalog=skill_catalog,
+            governed_memory=governed_memory,
             readiness=backend.readiness,
             startup=backend.startup,
             shutdown=backend.shutdown,

@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -52,6 +53,41 @@ def _transport() -> httpx.MockTransport:
                     "request_id": "request-get",
                 },
             )
+        if request.url.path == "/v1/memories/search":
+            return httpx.Response(
+                200,
+                json={"items": [], "next_cursor": "memory-next", "request_id": "memory-search"},
+            )
+        if request.url.path == "/v1/memory-proposals":
+            body = request.read()
+            assert body
+            proposal = {
+                "schema_version": "1",
+                "id": "proposal-1",
+                "project": "platform",
+                "access_groups": ["engineering"],
+                "title": "Stable retry key",
+                "body": "Use the delivery identifier.",
+                "provenance": {
+                    "repository": "org/incidents",
+                    "path": "INC-1.md",
+                    "revision": "abc",
+                },
+                "evidence": [
+                    {
+                        "repository": "org/service",
+                        "path": "test.py",
+                        "revision": "def",
+                    }
+                ],
+                "author_id": "agent",
+                "status": "proposed",
+                "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+                "revision": 1,
+            }
+            return httpx.Response(201, json={"proposal": proposal, "request_id": "memory-propose"})
         raise AssertionError(request.url.path)
 
     return httpx.MockTransport(handler)
@@ -73,7 +109,13 @@ def test_mcp_registers_three_model_oriented_tools_with_opaque_pagination() -> No
 
     names, result = asyncio.run(exercise())
 
-    assert names == ["search_team_knowledge", "list_team_skills", "get_team_skill"]
+    assert names == [
+        "search_team_knowledge",
+        "list_team_skills",
+        "get_team_skill",
+        "search_team_memory",
+        "propose_team_memory",
+    ]
     assert result == {
         "items": [],
         "next_cursor": "opaque-after-this-page",
@@ -103,6 +145,57 @@ def test_mcp_get_skill_preserves_snake_case_rest_shape() -> None:
         "revision": "rev-1",
         "heading": None,
     }
+
+
+def test_mcp_memory_tools_search_and_only_propose_without_promotion_tools() -> None:
+    async def exercise() -> tuple[dict[str, object], list[str]]:
+        async with (
+            ContextClient("https://context.example", "secret", transport=_transport()) as gateway,
+            Client(build_mcp_server(gateway)) as client,
+        ):
+            result = await client.call_tool(
+                "search_team_memory", {"query": "retry", "project": "platform"}
+            )
+            listed = await client.list_tools()
+            return result.structured_content or {}, [tool.name for tool in listed.tools]
+
+    result, names = asyncio.run(exercise())
+
+    assert result == {
+        "items": [],
+        "next_cursor": "memory-next",
+        "request_id": "memory-search",
+    }
+    assert "propose_team_memory" in names
+    assert all(action not in names for action in ("approve_team_memory", "reject_team_memory"))
+
+
+def test_mcp_memory_proposal_rejects_offset_naive_expiration_before_rest() -> None:
+    async def exercise() -> bool:
+        async with (
+            ContextClient("https://context.example", "secret", transport=_transport()) as gateway,
+            Client(build_mcp_server(gateway)) as client,
+        ):
+            result = await client.call_tool(
+                "propose_team_memory",
+                {
+                    "project": "platform",
+                    "access_groups": ["engineering"],
+                    "title": "Stable retry key",
+                    "body": "Use the delivery identifier.",
+                    "provenance": {
+                        "repository": "org/incidents",
+                        "path": "INC.md",
+                        "revision": "a",
+                    },
+                    "evidence": [{"repository": "org/service", "path": "test.py", "revision": "b"}],
+                    "expires_at": "2027-01-01T00:00:00",
+                    "idempotency_key": "naive-expiry",
+                },
+            )
+            return bool(result.is_error)
+
+    assert asyncio.run(exercise()) is True
 
 
 def test_mcp_denial_is_actionable_and_does_not_disclose_upstream_detail() -> None:
@@ -159,6 +252,8 @@ def test_mcp_stdio_entrypoint_negotiates_and_lists_tools() -> None:
         "search_team_knowledge",
         "list_team_skills",
         "get_team_skill",
+        "search_team_memory",
+        "propose_team_memory",
     ]
 
 
@@ -215,6 +310,8 @@ def test_context_mcp_eval_set_has_ten_multi_call_questions() -> None:
                 "search_team_knowledge",
                 "list_team_skills",
                 "get_team_skill",
+                "search_team_memory",
+                "propose_team_memory",
             )
         )
         assert calls >= 2

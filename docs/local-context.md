@@ -25,11 +25,15 @@ text.
 
 ## stdio MCP
 
-`uv run team-context-mcp` exposes only three read-only tools:
+`uv run team-context-mcp` exposes five model-facing tools:
 
 - `search_team_knowledge` returns approved excerpts with citations.
 - `list_team_skills` advertises authorized metadata and an opaque continuation cursor.
 - `get_team_skill` loads one authorized body and provenance after discovery.
+- `search_team_memory` returns only approved, unexpired, unsuperseded scoped memory.
+- `propose_team_memory` submits sourced non-authoritative proposals for separate review.
+
+MCP has no approve, reject, expire, or audit tool; model calls cannot promote memory.
 
 Tool descriptions explain when not to use each operation. Inputs are bounded, all fields are
 described, and service failures become actionable safe tool errors. Repository content and skill
@@ -48,9 +52,10 @@ unless that broader availability is intentional.
 - Python MCP SDK: `mcp>=2,<3`, locked at 2.3.0. The implementation uses v2 `MCPServer`, not the
   removed v1 `FastMCP` path.
 - Deterministic tests connect with v2 `Client(server)` in memory and through a real stdio subprocess,
-  call all three tools, cover denied scope and pagination, and compare REST/CLI/MCP snake_case data.
-- The official MCP Inspector CLI strict `tools/list` check passed against `team-context-mcp` on
-  2026-10-04 with no schema portability findings.
+  call the retrieval and proposal surfaces, cover denied scope and pagination, and compare
+  REST/CLI/MCP snake_case data.
+- The official MCP Inspector strict `tools/list` check passes the complete five-tool surface with no
+  schema portability findings.
 - `evals/context-mcp.xml` contains ten multi-call task-completion cases. They are deterministic eval
   specifications; no claim is made that a live model executed them in this slice.
 - `tests/fixtures/harness-skill-discovery.json` pins the observed Codex and documented Claude project

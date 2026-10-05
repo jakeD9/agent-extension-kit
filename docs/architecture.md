@@ -10,10 +10,10 @@ and Claude integrations remain independent of Genkit.
 Migration proceeds as verified vertical slices. The current implementation includes a Python context
 service that validates a Git-owned extension pack, synchronizes only its knowledge index at a pinned
 revision into MongoDB, builds its skill catalog in memory, and provides authenticated cited search
-plus authorized skill list/get, immutable resolution, and exact package-download operations. A shared
-Python clients provide a JSON-first context CLI, a three-tool stdio MCP adapter, and verified
-generic/Codex/Claude skill distribution. Genkit, coding jobs, Slack, and automation are not yet
-implemented.
+plus authorized skill list/get, immutable resolution, exact package downloads, and governed team
+memory. Shared Python clients provide a JSON-first context CLI, a five-tool stdio MCP adapter, and
+verified generic/Codex/Claude skill distribution. Genkit compatibility is pinned and verified;
+coordinator behavior, coding jobs, Slack, and automation are not yet implemented.
 
 ## Runtime boundaries
 
@@ -33,8 +33,9 @@ authorization, durable execution, validation, and external side effects.
 ## Source-of-truth boundaries
 
 - Git owns approved knowledge, skills, conventions, and architecture decisions.
-- The `team_context` MongoDB database owns derived knowledge indexes and source revision state; it
-  will also own governed memories and context audit. It does not own the skill catalog.
+- The `team_context` MongoDB database owns derived knowledge indexes, source revision state,
+  governed memories, idempotency receipts, and immutable context audit. It does not own the skill
+  catalog.
 - The `agent_runtime` MongoDB database will own conversations, Genkit snapshots/state, workflows, jobs,
   approvals, automations, reviews, and projections.
 - The databases use distinct service credentials. Only the context service can access `team_context`.
@@ -70,6 +71,12 @@ snake_case.
 REST is the primary context interface. The CLI and MCP adapters call those authenticated endpoints,
 validate the same shared Pydantic contracts, preserve opaque cursors, and never receive database
 credentials. Genkit-specific types stay inside `runtime_genkit`.
+
+Memory starts as a sourced proposal. Only an application-authenticated principal with the
+`approver` role can approve, reject, supersede, or expire it; model confidence has no authority.
+MongoDB transactions commit proposal CAS, memory/supersession, audit, and idempotency together.
+MCP exposes only `search_team_memory` and `propose_team_memory`, while REST and the operator CLI own
+governance actions and audit inspection.
 
 Git-owned team skills remain provider neutral. The shared `SkillClient` resolves an authorized subset
 to an immutable lock and `SkillInstaller` installs a bounded generic projection or fixed

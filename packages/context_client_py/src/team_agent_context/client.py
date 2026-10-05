@@ -11,6 +11,15 @@ from team_agent_contracts import (
     SKILL_NAME_PATTERN,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    MemoryAuditListRequest,
+    MemoryAuditResponse,
+    MemoryDecisionRequest,
+    MemoryDecisionResponse,
+    MemoryMutationResponse,
+    MemoryProposalCreateRequest,
+    MemoryProposalResponse,
+    MemorySearchRequest,
+    MemorySearchResponse,
     SkillGetRequest,
     SkillGetResponse,
     SkillListRequest,
@@ -37,6 +46,11 @@ _ERROR_MESSAGES = {
     "validation_failed": "The context request is invalid; check its project, cursor, and limits.",
     "internal_error": (
         "The context service could not complete the request; retry or contact an administrator."
+    ),
+    "memory_conflict": "The memory changed or the idempotency key conflicts; refresh and retry.",
+    "memory_not_found": "The memory was not found or is outside the caller's authorized scope.",
+    "memory_proposal_not_found": (
+        "The memory proposal was not found or is outside the caller's authorized scope."
     ),
     "service_unavailable": "The context service is unavailable; retry later.",
 }
@@ -108,10 +122,13 @@ class ContextClient:
         *,
         params: Mapping[str, str] | None = None,
         json_body: object | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> ResponseModel:
         payload = bytearray()
         try:
-            async with self._client.stream(method, path, params=params, json=json_body) as response:
+            async with self._client.stream(
+                method, path, params=params, json=json_body, headers=headers
+            ) as response:
                 async for chunk in response.aiter_bytes():
                     if len(payload) + len(chunk) > MAX_RESPONSE_BYTES:
                         raise ContextClientError(
@@ -174,6 +191,82 @@ class ContextClient:
         }
         return await self._request(
             SkillGetResponse, "GET", f"/v1/skills/{request.name}", params=params
+        )
+
+    async def search_memories(
+        self, query: str, project: str, *, limit: int = 20, cursor: str | None = None
+    ) -> MemorySearchResponse:
+        request = MemorySearchRequest(query=query, project=project, limit=limit, cursor=cursor)
+        return await self._request(
+            MemorySearchResponse,
+            "POST",
+            "/v1/memories/search",
+            json_body=request.model_dump(mode="json", exclude_none=True),
+        )
+
+    async def propose_memory(
+        self, request: MemoryProposalCreateRequest, *, idempotency_key: str
+    ) -> MemoryProposalResponse:
+        return await self._request(
+            MemoryProposalResponse,
+            "POST",
+            "/v1/memory-proposals",
+            json_body=request.model_dump(mode="json", exclude_none=True),
+            headers={"idempotency-key": idempotency_key},
+        )
+
+    async def decide_memory(
+        self,
+        proposal_id: str,
+        request: MemoryDecisionRequest,
+        *,
+        idempotency_key: str,
+        approve: bool,
+    ) -> MemoryDecisionResponse:
+        action = "approve" if approve else "reject"
+        return await self._request(
+            MemoryDecisionResponse,
+            "POST",
+            f"/v1/memory-proposals/{proposal_id}/{action}",
+            json_body=request.model_dump(mode="json"),
+            headers={"idempotency-key": idempotency_key},
+        )
+
+    async def expire_memory(
+        self,
+        memory_id: str,
+        request: MemoryDecisionRequest,
+        *,
+        idempotency_key: str,
+    ) -> MemoryMutationResponse:
+        return await self._request(
+            MemoryMutationResponse,
+            "POST",
+            f"/v1/memories/{memory_id}/expire",
+            json_body=request.model_dump(mode="json"),
+            headers={"idempotency-key": idempotency_key},
+        )
+
+    async def list_memory_audit(
+        self,
+        proposal_id: str,
+        project: str,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> MemoryAuditResponse:
+        request = MemoryAuditListRequest(
+            proposal_id=proposal_id, project=project, limit=limit, cursor=cursor
+        )
+        params = {
+            key: str(value)
+            for key, value in request.model_dump(exclude={"proposal_id"}, exclude_none=True).items()
+        }
+        return await self._request(
+            MemoryAuditResponse,
+            "GET",
+            f"/v1/memory-proposals/{proposal_id}/audit",
+            params=params,
         )
 
 

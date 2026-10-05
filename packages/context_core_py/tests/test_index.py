@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from team_agent_contracts import (
@@ -7,6 +8,8 @@ from team_agent_contracts import (
     Citation,
     ImmutableSkillPackageManifest,
     KnowledgeSearchRequest,
+    MemoryDecisionRequest,
+    MemoryProposalCreateRequest,
     Principal,
     SkillFileManifest,
     SkillListRequest,
@@ -16,9 +19,11 @@ from team_agent_contracts import (
 )
 from team_context_core import (
     GitSkillCatalog,
+    InMemoryGovernedMemory,
     InMemoryKnowledgeIndex,
     InvalidSkillCursor,
     KnowledgeChunk,
+    MemoryNotFoundError,
     SkillNotFoundError,
     SkillPackage,
 )
@@ -249,3 +254,53 @@ def test_empty_skill_catalog_keeps_explicit_revision_for_all_resolution() -> Non
 def test_skill_catalog_requires_nonempty_explicit_revision() -> None:
     with pytest.raises(ValueError, match="revision is required"):
         GitSkillCatalog([], "")
+
+
+def test_memory_mutations_require_every_protected_group() -> None:
+    memory = InMemoryGovernedMemory()
+    author = Principal(id="author", groups=["a", "b"], projects=["project"])
+    full_approver = Principal(
+        id="full", groups=["a", "b"], projects=["project"], roles=["approver"]
+    )
+    partial_approver = Principal(
+        id="partial", groups=["a"], projects=["project"], roles=["approver"]
+    )
+    request = MemoryProposalCreateRequest(
+        project="project",
+        access_groups=["a", "b"],
+        title="Scoped memory",
+        body="Both groups protect this record.",
+        provenance=Citation(repository="org/repo", path="incident.md", revision="rev"),
+        evidence=[Citation(repository="org/repo", path="test.py", revision="rev")],
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    proposal = asyncio.run(memory.propose(request, author, "proposal-key"))
+    decision = MemoryDecisionRequest(expected_revision=1, reason="reviewed")
+
+    with pytest.raises(MemoryNotFoundError):
+        asyncio.run(
+            memory.decide(
+                proposal.id,
+                decision,
+                partial_approver,
+                "partial-approval",
+                approve=True,
+            )
+        )
+
+    approved = asyncio.run(
+        memory.decide(proposal.id, decision, full_approver, "full-approval", approve=True)
+    )
+    assert approved.memory is not None
+    with pytest.raises(MemoryNotFoundError):
+        asyncio.run(
+            memory.expire(
+                approved.memory.id,
+                MemoryDecisionRequest(
+                    expected_revision=approved.memory.revision,
+                    reason="partial expiry",
+                ),
+                partial_approver,
+                "partial-expiry",
+            )
+        )

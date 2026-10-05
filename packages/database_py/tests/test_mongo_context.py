@@ -185,8 +185,12 @@ def test_migration_creates_validated_context_collections_and_indexes() -> None:
     asyncio.run(repository.migrate())
 
     assert set(database.collections) == {
+        "audit_events",
         "document_chunks",
         "documents",
+        "memories",
+        "memory_idempotency",
+        "memory_proposals",
         "schema_migrations",
         "source_revisions",
     }
@@ -206,6 +210,26 @@ def test_migration_creates_validated_context_collections_and_indexes() -> None:
     assert database.collections["source_revisions"].indexes == [
         ([("source_id", 1), ("revision", 1)], "source_revision_unique", True)
     ]
+    assert database.collections["memories"].indexes[0][1] == "authoritative_memory_scope"
+    assert database.collections["audit_events"].indexes[0][1] == "memory_audit_order"
+    proposal_schema = database.validators["memory_proposals"]["$jsonSchema"]["properties"]
+    assert proposal_schema["provenance"]["additionalProperties"] is False
+    assert proposal_schema["provenance"]["properties"]["repository"]["minLength"] == 1
+    assert proposal_schema["provenance"]["properties"]["path"]["minLength"] == 1
+    assert proposal_schema["provenance"]["properties"]["revision"]["minLength"] == 1
+    assert proposal_schema["evidence"]["minItems"] == 1
+    assert proposal_schema["evidence"]["maxItems"] == 20
+    assert proposal_schema["evidence"]["items"]["required"] == [
+        "repository",
+        "path",
+        "revision",
+    ]
+    memory_schema = database.validators["memories"]["$jsonSchema"]["properties"]
+    assert memory_schema["evidence"]["minItems"] == 1
+    assert memory_schema["evidence"]["maxItems"] == 20
+    receipt_schema = database.validators["memory_idempotency"]["$jsonSchema"]["properties"]
+    assert "response_json" in receipt_schema
+    assert "response" not in receipt_schema
 
 
 def test_migration_upgrades_all_v2_revisions_without_using_legacy_skills() -> None:

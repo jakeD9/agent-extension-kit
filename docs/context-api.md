@@ -5,8 +5,8 @@
 The context service exposes an internal, additive `/v1` HTTP API to the hosted runtime and later
 CLI/MCP adapters. Callers authenticate with `Authorization: Bearer <token>`; the configured
 authenticator resolves the token to a principal whose project and group scopes are enforced again
-inside the context application service. All operations in this document are read-only and safe to
-retry.
+inside the context application service. Memory mutations require a bounded `Idempotency-Key`;
+decision and expiry requests also require the current `expected_revision`.
 
 Every response includes `X-Request-ID`. Successful JSON responses include the same value as
 `request_id`. Python REST, JSON, and lockfile contracts use snake_case. Errors use one envelope:
@@ -111,3 +111,23 @@ the current revision.
 `POST /v1/knowledge/search` retains the S01/S02 contract: a validated body containing `query`,
 `project`, and a bounded optional `limit`, with authorized revision-pinned results and citations.
 It is read-only and safe to retry.
+
+## Governed memory
+
+- `POST /v1/memories/search` returns only approved, unexpired, unsuperseded memories authorized by
+  project and group. It uses a maximum limit of 50 and a query/project-bound opaque cursor.
+- `POST /v1/memory-proposals` creates a sourced proposal and returns 201 plus `Location`. The body
+  preserves project, access groups, title/body, provenance, evidence, expiry, and an optional memory
+  to supersede. A retry with the same key and payload returns the same proposal; key reuse with a
+  different payload returns `409 memory_conflict`.
+- `POST /v1/memory-proposals/{id}/approve` and `/reject` require the `approver` role, an idempotency
+  key, and `expected_revision`. Approval creates the authoritative memory and atomically supersedes
+  the named current memory when present.
+- `POST /v1/memories/{id}/expire` lets an approver explicitly retire current memory using the same
+  idempotency and optimistic-concurrency rules.
+- `GET /v1/memory-proposals/{id}/audit` returns bounded, cursor-paginated immutable lifecycle events.
+
+Missing and authorization-hidden proposal or memory IDs share the same 404 contract. Models can
+search and propose through MCP, but MCP deliberately exposes no approve, reject, expire, or audit
+tool. OpenAPI at `/openapi.json` documents the named v1 request and response schemas. Changes within
+v1 are additive; breaking changes require `/v2`.

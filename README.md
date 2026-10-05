@@ -8,8 +8,8 @@ without Genkit or database credentials.
 The migration is intentionally incremental. The current implementation provides authenticated,
 revision-pinned MongoDB knowledge search plus authorized skill discovery/loading from a pinned
 Git/filesystem catalog, immutable package downloads, a shared verified pull client/installer,
-JSON-first context CLI, and project-scoped stdio MCP adapter. Genkit orchestration, coding runners,
-Slack, and automations arrive in later roadmap slices.
+JSON-first context CLI, project-scoped stdio MCP adapter, and transaction-backed governed memory.
+Genkit coordinator behavior, coding runners, Slack, and automations arrive in later roadmap slices.
 
 ## Quick start
 
@@ -74,10 +74,12 @@ optional explicit `--project` must match.
 uv run team-context search "stable idempotency key" --project event-ingestion
 uv run team-context skill list --project event-ingestion
 uv run team-context skill get diagnose-and-fix --project event-ingestion
+uv run team-context memory search "vendor retry key" --project event-ingestion
 ```
 
-`team-context-mcp` exposes the same authorized search and skill list/get behavior as three read-only
-stdio tools. The checked-in `.codex/config.toml` and `.mcp.json` are project-scoped launch examples;
+`team-context-mcp` exposes knowledge/skill retrieval plus authoritative memory search and sourced
+memory proposals as five stdio tools. It deliberately exposes no approval, rejection, expiry, or
+audit tool. The checked-in `.codex/config.toml` and `.mcp.json` are project-scoped launch examples;
 set `TEAM_AGENT_CONTEXT_URL` and `TEAM_AGENT_TOKEN` in the host environment. See
 `docs/local-context.md` for tool behavior, pagination, errors, and verification.
 
@@ -107,7 +109,7 @@ uv build --all-packages
 The default suite skips the live MongoDB integration test. With the Compose stack running:
 
 ```sh
-TEST_TEAM_CONTEXT_MONGODB_URI="${TEAM_CONTEXT_MONGODB_URI:-mongodb://team_context_service:local-context-password@127.0.0.1:27017/team_context?authSource=team_context}" \
+TEST_TEAM_CONTEXT_MONGODB_URI="${TEAM_CONTEXT_MONGODB_URI:-mongodb://team_context_service:local-context-password@127.0.0.1:27017/team_context?authSource=team_context&replicaSet=team-agent-rs&directConnection=true}" \
   uv run pytest tests/integration/test_persistent_context.py
 ```
 

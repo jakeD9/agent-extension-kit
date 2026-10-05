@@ -2,9 +2,9 @@
 
 ## Status
 
-S03 keeps persistent knowledge in `team_context` while rebuilding the authorized skill catalog from
-the pinned Git/filesystem content pack. Collections marked S02 have strict JSON Schema validators and
-migration-owned indexes; later collections remain target design.
+S08 keeps persistent knowledge and governed memory in `team_context` while rebuilding the authorized
+skill catalog from the pinned Git/filesystem content pack. Current collections have strict JSON
+Schema validators and migration-owned indexes.
 
 ## `team_context`
 
@@ -19,6 +19,7 @@ Owned exclusively by the context service:
 | `memories` | Approved, scoped memories with provenance, expiry, and supersession. |
 | `memory_proposals` | Candidate memories and authorized review history. |
 | `audit_events` | Append-only context authorization and mutation decisions. |
+| `memory_idempotency` | Durable request fingerprints and exact mutation replay results. |
 
 ## `agent_runtime`
 
@@ -58,6 +59,13 @@ superseded S03 design may retain an unused legacy `skills` collection until an o
 the service no longer creates, queries, synchronizes, or requires that collection. The v3 migration
 upgrades every historical source-revision row and removes its obsolete `skill_count` field before
 recording the migration.
+
+The v4 migration adds strict snake_case proposal, memory, audit, and idempotency collections.
+Mutations use MongoDB transactions over targeted records: proposal revision changes, optional
+supersession, authoritative memory, audit events, and the idempotency receipt commit together.
+Search and audit apply project/group and current-authority filters in MongoDB before materializing
+content. Audit events have no TTL and are inserted only. Development Compose runs MongoDB as a
+single-node replica set; readiness proves a session-bound transactional write rather than a ping.
 
 Immutable package manifests and bundles are likewise derived in memory from the pinned checkout.
 Their content IDs bind repository and source-revision provenance, package metadata, and the complete
