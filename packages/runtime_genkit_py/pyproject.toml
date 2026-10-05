@@ -12,14 +12,19 @@ dependencies = [
   "openai==3.24.0",
   "pydantic==2.13.5",
   "team-agent-contracts",
+  "team-agent-context",
+  "team-agent-runtime",
   "team-agent-skills",
 ]
 
 [project.scripts]
 team-agent-genkit-compat = "team_agent_runtime_genkit.compatibility:main"
+team-agent-runtime = "team_agent_runtime_genkit.cli:main"
 
 [tool.uv.sources]
 team-agent-contracts = { workspace = true }
+team-agent-context = { workspace = true }
+team-agent-runtime = { workspace = true }
 team-agent-skills = { workspace = true }
 
 [build-system]

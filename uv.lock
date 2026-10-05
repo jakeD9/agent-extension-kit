@@ -9,6 +9,7 @@ members = [
     "team-agent-context",
     "team-agent-contracts",
     "team-agent-database",
+    "team-agent-runtime",
     "team-agent-runtime-genkit",
     "team-agent-skills",
     "team-context-core",
@@ -1148,6 +1149,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "team-agent-runtime"
+version = "0.2.0"
+source = { editable = "packages/runtime_py" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "team-agent-contracts" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.12.0,<3" },
+    { name = "team-agent-contracts", editable = "packages/contracts_py" },
+]
+
+[[package]]
 name = "team-agent-runtime-genkit"
 version = "0.2.0"
 source = { editable = "packages/runtime_genkit_py" }
@@ -1160,7 +1176,9 @@ dependencies = [
     { name = "httpx" },
     { name = "openai" },
     { name = "pydantic" },
+    { name = "team-agent-context" },
     { name = "team-agent-contracts" },
+    { name = "team-agent-runtime" },
     { name = "team-agent-skills" },
 ]
 
@@ -1174,7 +1192,9 @@ requires-dist = [
     { name = "httpx", specifier = "==0.28.1" },
     { name = "openai", specifier = "==3.24.0" },
     { name = "pydantic", specifier = "==2.13.5" },
+    { name = "team-agent-context", editable = "packages/context_client_py" },
     { name = "team-agent-contracts", editable = "packages/contracts_py" },
+    { name = "team-agent-runtime", editable = "packages/runtime_py" },
     { name = "team-agent-skills", editable = "packages/skills_py" },
 ]
 

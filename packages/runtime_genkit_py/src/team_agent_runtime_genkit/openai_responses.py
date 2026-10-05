@@ -6,7 +6,7 @@ import asyncio
 import copy
 import inspect
 import json
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal, Protocol, cast
 
 from genkit import ActionRunContext, FinishReason, GenkitError, Role
@@ -488,6 +488,8 @@ def define_openai_responses_model(
     *,
     model_id: str = DEFAULT_MODEL_ID,
     client: Any | None = None,
+    usage_observer: Callable[[ModelUsage], None] | None = None,
+    request_observer: Callable[[ModelRequest[Any]], None] | None = None,
 ) -> str:
     """Register a Responses-backed Genkit model and return its registry name."""
 
@@ -501,6 +503,8 @@ def define_openai_responses_model(
         context: ActionRunContext[ModelResponseChunk],
     ) -> ModelResponse:
         try:
+            if request_observer is not None:
+                request_observer(request)
             response = await _await_or_abort(
                 responses_client.responses.create(
                     **_request_options(model_id, request, stream=context.is_streaming)
@@ -508,8 +512,12 @@ def define_openai_responses_model(
                 context.abort_signal,
             )
             if context.is_streaming:
-                return await _stream_response(response, context)
-            return _model_response(response)
+                result = await _stream_response(response, context)
+            else:
+                result = _model_response(response)
+            if usage_observer is not None and result.usage is not None:
+                usage_observer(result.usage)
+            return result
         except asyncio.CancelledError:
             raise
         except GenkitError:

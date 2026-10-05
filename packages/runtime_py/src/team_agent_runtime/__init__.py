@@ -1,0 +1,122 @@
+"""Provider-neutral contract for one stateless coordinator turn."""
+
+from __future__ import annotations
+
+import re
+from enum import StrEnum
+from typing import Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from team_agent_contracts import SKILL_NAME_PATTERN, Citation, SkillLock
+
+
+class _Contract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentTurnStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class UsageSource(StrEnum):
+    OBSERVED = "observed"
+    SYNTHETIC = "synthetic"
+
+
+class DecisionKind(StrEnum):
+    SKILL_USE = "skill_use"
+    TOOL_USE = "tool_use"
+    SOURCE_PRECEDENCE = "source_precedence"
+
+
+class AgentTurnRequest(_Contract):
+    schema_version: Literal["1"] = "1"
+    run_id: str = Field(min_length=1, max_length=128)
+    project: str = Field(min_length=1, max_length=200)
+    objective: str = Field(min_length=1, max_length=20_000)
+    skill_names: list[str] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def unique_valid_skills(self) -> AgentTurnRequest:
+        if len(set(self.skill_names)) != len(self.skill_names) or any(
+            re.fullmatch(SKILL_NAME_PATTERN, name) is None for name in self.skill_names
+        ):
+            raise ValueError("skill_names must be unique kebab-case names")
+        return self
+
+
+class AgentDecision(_Contract):
+    kind: DecisionKind
+    name: str = Field(min_length=1, max_length=128)
+    detail: str = Field(min_length=1, max_length=2_000)
+
+
+class AgentUsage(_Contract):
+    source: UsageSource
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    cached_content_tokens: int = Field(default=0, ge=0)
+    thoughts_tokens: int = Field(default=0, ge=0)
+
+
+class AgentFailure(_Contract):
+    code: str = Field(min_length=1, max_length=128)
+    message: str = Field(min_length=1, max_length=500)
+    retriable: bool = False
+
+
+class AgentTurnResult(_Contract):
+    schema_version: Literal["1"] = "1"
+    run_id: str
+    status: AgentTurnStatus
+    text: str
+    canonical_knowledge_citations: list[Citation]
+    supplemental_memory_citations: list[Citation]
+    content_revision: str | None = Field(default=None, max_length=256)
+    selected_skill_lock: SkillLock | None = None
+    decisions: list[AgentDecision]
+    usage: AgentUsage
+    failures: list[AgentFailure]
+
+    @model_validator(mode="after")
+    def consistent_status(self) -> AgentTurnResult:
+        if self.status == AgentTurnStatus.COMPLETED:
+            if (
+                self.failures
+                or self.selected_skill_lock is None
+                or self.content_revision is None
+                or not self.canonical_knowledge_citations
+                or self.selected_skill_lock.catalog_revision != self.content_revision
+                or any(
+                    citation.revision != self.content_revision
+                    for citation in self.canonical_knowledge_citations
+                )
+                or not any(
+                    decision.kind == DecisionKind.SOURCE_PRECEDENCE for decision in self.decisions
+                )
+            ):
+                raise ValueError(
+                    "completed results require canonical revision evidence and no failures"
+                )
+        elif not self.failures:
+            raise ValueError("failed results require a failure")
+        return self
+
+
+class AgentRuntime(Protocol):
+    async def execute(self, request: AgentTurnRequest) -> AgentTurnResult: ...
+
+
+__all__ = [
+    "AgentDecision",
+    "AgentFailure",
+    "AgentRuntime",
+    "AgentTurnRequest",
+    "AgentTurnResult",
+    "AgentTurnStatus",
+    "AgentUsage",
+    "DecisionKind",
+    "UsageSource",
+]

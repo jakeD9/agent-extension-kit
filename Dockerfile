@@ -14,6 +14,7 @@ COPY packages/contracts_py ./packages/contracts_py
 COPY packages/database_py ./packages/database_py
 COPY packages/skills_py ./packages/skills_py
 COPY packages/runtime_genkit_py ./packages/runtime_genkit_py
+COPY packages/runtime_py ./packages/runtime_py
 COPY extension ./extension
 
 RUN uv sync --locked --no-dev --all-packages

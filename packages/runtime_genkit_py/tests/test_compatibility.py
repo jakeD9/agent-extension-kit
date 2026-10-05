@@ -343,7 +343,14 @@ def test_responses_adapter_supports_tools_structured_output_and_streaming() -> N
 
     ai = Genkit()
     client = _FakeClient()
-    model = define_openai_responses_model(ai, client=client)
+    observed_requests: list[ModelRequest[Any]] = []
+    observed_usage: list[Any] = []
+    model = define_openai_responses_model(
+        ai,
+        client=client,
+        request_observer=observed_requests.append,
+        usage_observer=observed_usage.append,
+    )
 
     class ToolInput(BaseModel):
         value: int
@@ -382,6 +389,8 @@ def test_responses_adapter_supports_tools_structured_output_and_streaming() -> N
         assert (await streamed.response).text == "stream-ok"
 
     asyncio.run(check())
+    assert len(observed_requests) == len(client.responses.calls)
+    assert sum(int(usage.total_tokens or 0) for usage in observed_usage) == 18
     assert client.responses.calls[0]["model"] == "gpt-6-astra"
     assert client.responses.calls[0]["include"] == ["reasoning.encrypted_content"]
     assert client.responses.calls[0]["tools"][0]["strict"] is False

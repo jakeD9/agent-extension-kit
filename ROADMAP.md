@@ -28,7 +28,7 @@ after the team approves that boundary.
   > After this: a locked executable proves the supported Genkit agent-or-flow path, OpenAI model adapter, Skills middleware, tools, structured output, streaming, sessions, aborts, and FastAPI integration.
 - [x] **S08: Domain authority and shared working memory correction** `risk:high` `depends:[S06]`
   > After this: project/domain admission exposes the complete corpus, Git remains sole canonical authority, and team-wide supplemental memory has a provenance-rich lifecycle without approvers or per-record groups.
-- [ ] **S09: Genkit coordinator tracer** `risk:high` `depends:[S06,S07,S08]`
+- [x] **S09: Genkit coordinator tracer** `risk:high` `depends:[S06,S07,S08]`
   > After this: a narrow diagnostic/CI probe executes one stateless hosted Genkit turn through the configured OpenAI model adapter, selected immutable skills, and project-bound read-only context tools, returning evidence-derived citations and usage in provider-neutral JSON.
 - [ ] **S10: Durable Genkit conversations** `risk:high` `depends:[S09]`
   > After this: ordered turns plus a bounded summary survive restart, same-conversation turns serialize, and every turn records the exact Git revision and skill lock it used while later turns may adopt newer canonical knowledge.
