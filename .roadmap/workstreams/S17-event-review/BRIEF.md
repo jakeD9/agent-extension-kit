@@ -5,6 +5,7 @@ automation definitions, message-specific and canonical review keys, consolidated
 and Slack reaction projection. Definitions select named skills and may require a catalog revision;
 run creation resolves one immutable skill lock. Same-job retries reuse staged packages; a new job
 uses a verified cache or fails when the exact package is unavailable after later deployments. Persist
-publication before projection and treat emoji as non-authoritative. Verify duplicate messages/events,
-access-scope and policy fingerprints, locked-skill retry behavior, one review per exact SHA,
+publication before projection and treat emoji as non-authoritative. Review identity uses repository,
+merge request, exact head SHA, and workflow version; project admission remains the content boundary.
+Verify duplicate messages/events, locked-skill retry behavior, one review per exact SHA,
 ambiguous publication recovery, new heads, and repairable projection state.

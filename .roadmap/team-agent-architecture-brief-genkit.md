@@ -16,7 +16,7 @@ and shared working memory. Do not introduce per-artifact groups or field-level c
 
 Build a deployment-neutral, Docker-packaged team agent that supports Slack threads, a CLI, event and scheduled automations, and bounded multi-agent workflows. Use Genkit Python for hosted reasoning and coordination. Preserve a provider-neutral extension kit that local Codex and Claude Code can use independently of Genkit.
 
-The extension kit supplies approved knowledge, reusable skills, persistent scoped memory, and narrow internal tools. Genkit operates hosted agents that consume those capabilities. Disposable coding runners invoke Codex or Claude Code for repository work. Application code owns authorization, durable execution, validation, and publication.
+The extension kit supplies canonical Git knowledge, reusable skills, supplemental shared memory, and narrow internal tools. Genkit operates hosted agents that consume those capabilities. Disposable coding runners invoke Codex or Claude Code for repository work. Application code owns authorization, durable execution, validation, and publication.
 
 Decisions:
 
@@ -79,8 +79,8 @@ team-agent/
     cli/                    # runtime and context CLI commands
   packages/
     contracts/              # Pydantic contracts and JSON schemas
-    auth/                   # identities, scopes, policy decisions
-    runtime_genkit/         # agents, model adapters, Genkit session adapter
+    auth/                   # identities, domain admission, capability checks
+    runtime_genkit/         # generation, model adapters, tools, skill middleware
     workflows/              # bounded workflow definitions and reconciliation
     jobs/                   # executor contracts and local Docker implementation
     automations/            # matching, schedules, leases, cursors
@@ -125,7 +125,19 @@ class AgentRuntime(Protocol):
     async def execute(self, request: AgentTurnRequest) -> AgentTurnResult: ...
 ```
 
-Requests include run ID, authenticated principal reference, conversation ID, objective, project/repository scope, context references, pinned skill revisions, and capability policy. Results include text, citations, structured decisions, usage, pending external jobs, and explicit status. Genkit types belong only in `runtime_genkit`; use an opaque, versioned envelope when retaining framework state.
+S09 requests contain only run ID, project, objective, and selected skill names. Results contain text,
+evidence-derived citations, observable application decisions, usage, exact content revision and skill
+lock, failures, and explicit status. Trusted configuration binds identity and environment. S10 may
+extend the provider-neutral request with bounded `conversation_context` containing the current
+summary and recent turns; the S09 probe continues to omit it. Job metadata stays outside the turn
+request. Neither extension introduces Genkit types into domain contracts. Genkit types belong only
+in `runtime_genkit`.
+
+S09 exposes a single JSON-in/JSON-out diagnostic and CI probe. It is not an interactive CLI and does
+not replace the primary local developer workflow: Codex or Claude with installed project skills and
+the team-context MCP/context CLI. Each S09 invocation is stateless, installs selected skills into a
+temporary projection, exposes only project-bound read-only knowledge and memory search tools, and
+derives citations from observed tool results.
 
 ### Framework responsibilities and application responsibilities
 
@@ -134,7 +146,7 @@ Requests include run ID, authenticated principal reference, conversation ID, obj
 | Reasoning and model calls | Model plugins, generation, tool loop | Provider configuration and capability tests |
 | Conversational coordinator | Python agent API where verified | Slack identity, thread mapping, turn serialization |
 | Specialist delegation | Agent calls or tools wrapping specialist flows | Allowed graph, budgets, reconciliation |
-| Persistent conversation | Session-store interface | Custom MongoDB store, retention and fencing |
+| Persistent conversation | Consumes bounded summary and recent turns | MongoDB history, compaction, CAS, leases and fencing |
 | External coding | Tool wrapping a coding-job adapter | Queue, container executor, harness adapter |
 | Retrieval | Tools and optional retriever integration | Context service, scope filtering, MongoDB search |
 | Automations | Invoked agent/flow | Event matcher, scheduler, leases and idempotency |
@@ -222,13 +234,12 @@ instructions. Canonical Git content wins any conflict. Cap context size.
 
 One Slack thread maps to one conversation under a unique `(workspace_id, channel_id, thread_ts)` key. Serialize turns across replicas. Follow-ups continue the conversation when earlier work submitted jobs or requested clarification.
 
-Implement `MongoSessionStore` against the pinned Python `SessionStore` contract. Current docs expose snapshot reads and atomic functional snapshot updates, with built-in memory, file, and Firestore implementations. MongoDB support here is our custom adapter; Firestore is not required.
-
-Keep Genkit session/snapshot identifiers mapped to application conversation IDs. Test snapshot retrieval by session or snapshot ID, branch/parent relationships, latest pointers, atomic updates, status transitions, and any abort/detach hooks actually used. Persist adapter/schema versions and isolate store keys by tenant and agent role.
-
-Use MongoDB compare-and-set revisions or transactions for atomic updates, plus conversation leases and fencing tokens. A process-local lock alone is insufficient. Avoid unbounded snapshot documents: use a tested checkpoint/diff or chunked representation with bounded document sizes, and compact conversation context. Do not assume a snapshot ID means external tools completed.
-
-If using the flows fallback, keep application-owned ordered messages and summaries behind the same runtime interface. Do not maintain two independent authoritative conversation histories. Optional transcripts are audit projections.
+Keep one application-owned conversation history as ordered turns plus a bounded summary. Use MongoDB
+compare-and-set revisions, conversation leases, and fencing tokens; a process-local lock is
+insufficient. Each turn records its exact Git content revision and skill lock. Later turns may use
+newer canonical knowledge, while a coding job pins one exact revision for its lifetime. Do not build
+snapshot ancestry, conversation branching, or a second framework-owned authoritative transcript in
+v1. Genkit state, if retained, stays an adapter detail.
 
 Keep three concepts separate:
 
@@ -297,9 +308,15 @@ team-agent worker
 
 Ingress verifies Slack signatures, deduplicates events, acknowledges promptly, and enqueues work. The scheduler claims due occurrences. Workers claim runs with renewable leases. These modes may share a development process but must not require co-location.
 
-Run states: `queued`, `running`, `waiting_for_jobs`, `needs_input`, `awaiting_approval`, `completed`, `failed`, `cancelled`, `timed_out`.
+Run states: `queued`, `running`, `waiting_for_jobs`, `needs_input`, `completed`, `failed`, `cancelled`, `timed_out`.
 
-Persist step transitions and external action intents before invocation. Native agent background execution is optional; required recovery must work from application records even when a framework background task cannot resume. Recovery reconciles submitted actions with executor/provider state rather than blindly replaying tool calls. Use idempotency keys for job submission, review publication, branch/PR creation, and Slack reactions. A network timeout may mean an action succeeded remotely; query its status before retrying. Do not claim exactly-once delivery; provide effectively-once visible outcomes through deduplication and reconciliation.
+Core v1 persists explicit transitions on `runs` and `coding_jobs`; do not introduce a generalized
+step/action/outbox framework without a demonstrated crash boundary. Native agent background execution
+is optional; required recovery works from application records. Reconcile submitted jobs and remote
+publications rather than blindly replaying them. Use idempotency keys for job submission, review
+publication, branch/PR creation, and Slack reactions. A network timeout may mean an action succeeded
+remotely; query its status before retrying. Do not claim exactly-once delivery; provide effectively-once
+visible outcomes through deduplication and reconciliation.
 
 A coding-job submission returns a job ID promptly. Suspend the logical run, let workers track completion, and invoke the coordinator with a structured result when ready. Do not hold an HTTP request open for a 30-minute coding task or poll indefinitely inside the model loop.
 
@@ -394,7 +411,8 @@ harness-reported checks, independent verification, exact reviewed SHA, publicati
 and supplemental working-memory suggestions. Findings include severity, path/line reference,
 explanation, evidence, and suggested action.
 
-Terminal job states: `completed`, `failed`, `timed_out`, `cancelled`, `needs_input`, `awaiting_approval`, `no_fix_found`, `unsafe_to_proceed`.
+Terminal job states: `completed`, `failed`, `timed_out`, `cancelled`, `needs_input`,
+`no_fix_found`, `unsafe_to_proceed`.
 
 The supervisor creates an ephemeral workspace, checks out exact revisions, configures project instructions and the extension, grants scoped credentials, launches the harness, validates output/diff, executes mandatory checks, and performs authorized publication. Keep Git write credentials out of model context and harness environment. Verification must use an execution environment with no publication credentials; repository tests are arbitrary code.
 
@@ -419,7 +437,9 @@ Logical review identity:
 automation_id + slack_message_id + merge_request_id + head_sha
 ```
 
-Use this for message-specific dispatch/projection. Also maintain a canonical review key `(workflow_version, repository, merge_request_id, head_sha, review_policy_fingerprint)` to reuse an authorized equivalent review across duplicate messages where configured. Do not reuse results across different access scopes or review requirements.
+Use this for message-specific dispatch/projection. The optional event-review slice may also maintain
+a canonical review key `(workflow_version, repository, merge_request_id, head_sha)` to reuse an
+equivalent exact-revision review across duplicate messages.
 
 Unique scheduled occurrence key: `(automation_id, scheduled_occurrence)`. Atomically claim due definitions, create occurrences, track child runs, and advance scheduling state without losing work on crash. Use transactions where necessary, or a documented idempotent recovery protocol. Store timezone, schedule expression, next-run timestamp, cursor, enabled state, creator, policy, budgets, and concurrency limits.
 
@@ -427,10 +447,13 @@ Emoji is a projection, not the authority. Internal review records establish comp
 
 ## 11. MongoDB collections and indexes
 
-`agent_runtime`: identities, slack_threads, sessions, session_snapshots, snapshot_chunks, session_pointers, session_events, runs, workflow_steps, coding_jobs, completion_outbox, action_intents, approvals, event_receipts, automations, automation_runs, code_reviews, review_projections.
+`agent_runtime` core v1: identities, slack_threads, conversations, conversation_turns, runs,
+coding_jobs, event_receipts, code_reviews, publication_records. Optional automation slices may add
+automations, automation_runs, and review_projections when their behavior is implemented.
 
-`team_context`: documents, document_chunks, source_revisions, active_source_revisions, memories,
-memory_idempotency, audit_events.
+`team_context`: knowledge_documents, knowledge_chunks, knowledge_revisions,
+active_knowledge_revisions, shared_memories, shared_memory_idempotency,
+shared_memory_audit_events, schema_migrations.
 
 Skill packages and discovery metadata are rebuildable from Git and are not MongoDB collections.
 Runtime and automation records retain only the selected identities, immutable revisions, and hashes
@@ -438,7 +461,11 @@ needed for provenance and retry.
 
 Only the context service accesses `team_context`. Local agents receive no MongoDB credentials. Use collection validators and explicit schema migrations.
 
-Required unique indexes: Slack thread identity; Slack event receipt ID; session event ID and `(session_id, sequence)` where events are used; tenant/agent/snapshot ID and session pointer key; coding submission key; action idempotency key; automation occurrence key; canonical review key; message-specific projection key. Add query indexes for status/next-at/lease expiration and scope/source revision. Apply TTL only to disposable receipts or expired data with a defined retention policy, not to authoritative completion records needed for deduplication.
+Required core indexes cover Slack thread identity, Slack event receipt ID, ordered conversation turns,
+coding submission, publication idempotency, exact review target, lease expiration, and context
+scope/source revision. Optional automation slices add occurrence and projection keys. Apply TTL only
+to disposable receipts or expired data with a defined retention policy, not authoritative completion
+records needed for deduplication.
 
 Avoid embedding unbounded events, logs, or findings in one document. Keep large patches/logs out of model prompts; use bounded extracts and artifact references. Local dev may use a Docker volume for artifacts; define an artifact-store interface for other environments.
 
@@ -446,11 +473,10 @@ Avoid embedding unbounded events, logs, or findings in one document. Keep large 
 
 Authenticate humans and services, map identities to project/domain admission, and reject content
 retrieval before results are materialized when admission is absent. Admitted developers share the
-complete domain corpus. Enforce tools and workflows outside prompts. External-action approvals are
-bound to run/action, repository, revision, capabilities, and expiration; changes invalidate
-incompatible approvals. These approvals do not govern knowledge or working-memory contribution.
-
-Explicit requests to create a PR authorize a draft PR within the allowed scope. Automation creation records the permitted action classes. Merge, deploy, production mutation, and data migration require separate authority and are disabled in the initial release.
+complete domain corpus. Enforce tools and workflows outside prompts. An explicit developer request
+or configured automation authorizes its bounded branch, draft-PR, or review publication. Do not add
+an internal approval subsystem. Merge, deploy, production mutation, and data migration remain
+disabled in the initial release.
 
 Do not mount a Docker socket into Slack ingress or the coordinator in production. Run the local Docker executor in a separate trusted worker process; make the boundary explicit in Compose and docs. Containers run non-root, use ephemeral workspaces, have resource/time limits, and emit structured logs. Network isolation is enforced by the executor/platform, not by prompt text.
 
@@ -493,9 +519,10 @@ knowledge revisions, skill locks, and working-memory provenance are preserved.
 
 ### Phase 2 — Genkit coordinator and conversations
 
-Implement model factory, Genkit adapter consuming the shared skill resolver/installer, MongoDB session
-store, provider contract suite, and runtime CLI. Use mock runtime fixtures in CI, then validate one
-live provider when credentials exist.
+Implement the model factory, Genkit adapter consuming the shared skill resolver/installer, the S09
+stateless diagnostic/CI JSON probe, then application-owned ordered conversations with bounded
+summaries. Use deterministic runtime fixtures in CI, then validate one live provider when credentials
+exist.
 
 Exit: skill-guided retrieval works; multi-turn state survives restart; concurrent same-thread turns are serialized; live-provider limitations are documented without silent parameter dropping.
 
@@ -507,33 +534,40 @@ mock draft PR publication.
 
 Exit: `diagnose-and-fix` fixes a fixture idempotency defect using a retrieved ADR, passes its regression test and supervisor checks, and returns a structured draft PR result. A crash after submission does not create a duplicate job or publication.
 
-### Phase 4 — Slack and automations
+### Phase 4 — Core Slack integration
 
-Add signed Slack ingress, identity/thread mapping, asynchronous replies, URL validation, event automation, scheduler, six-hour reconciliation, cursors, and reaction projections.
+Add signed Slack ingress, identity/thread mapping, asynchronous replies, URL validation, and the
+end-to-end Slack-to-Codex workflow. Event automation, scheduling, reconciliation, cursors, and
+reaction projections are optional S17–S18 expansions.
 
-Exit: duplicate events and scans review one revision once; missing reaction is repaired; new head SHA triggers a new review; failed/deferred targets survive cursor advancement; leases recover after worker failure.
+Exit: duplicate Slack events produce one visible result; thread follow-ups survive restart; the
+fixture coding workflow reports progress and one mock publication outcome.
 
-### Phase 5 — Bounded multi-agent review
+### Phase 5 — Optional automation and parallel review
 
-Implement the two-role parallel review and reconciliation workflow with separate read-only workspaces and a maximum of two jobs per review. Add global/per-automation caps. Preserve a sequential option.
+Optionally implement event review, scheduled reconciliation, and two-role parallel review with
+separate read-only workspaces and a maximum of two jobs per review. Add global/per-automation caps.
+Preserve the core sequential option.
 
 Exit: duplicate/conflicting findings are reconciled with evidence; stale heads and missing required reviewers block successful publication; result attribution and budgets are visible; restarting resumes/reconciles steps rather than repeating side effects.
 
 ### Phase 6 — Real integrations and hardening
 
-Implement configured Git provider publication, second harness, external-action approval UX,
-credential rotation, injection/failure evals, operational recovery docs, and the S24 team/domain CI
-adoption guide. Keep deployment neutral and keep the CI publication contract platform agnostic.
+Implement configured Git provider publication, credential rotation, injection/failure evals,
+operational recovery docs, and the S24 team/domain CI adoption guide. Keep deployment neutral and
+the CI publication contract platform agnostic. Additional providers, the Claude harness, scheduled
+automation, and parallel review are optional expansions rather than v1 gates.
 
 Exit: end-to-end fixture and failure suites pass; real publication uses supervisor credentials only; no merge/deploy/production capability is exposed; local extension remains usable without Genkit.
 
 ## 15. Required verification
 
 Use meaningful unit/integration tests for domain admission, complete-corpus visibility, Git-over-memory
-precedence, working-memory lifecycle, MongoDB session semantics, fencing, event and occurrence
-deduplication, action reconciliation, skill selection, stale-head review, partial reviewer failure,
-cancellation, diff rejection, credential separation, and provider translation. Include
-prompt-injection fixtures in retrieved knowledge and repository files.
+precedence, working-memory lifecycle, conversation persistence/CAS/fencing, Slack deduplication,
+publication reconciliation, skill selection, stale-head review, cancellation, diff rejection,
+credential separation, and provider translation. Optional automation and parallel-review slices add
+event/occurrence deduplication and partial-reviewer failure checks. Include prompt-injection fixtures
+in retrieved knowledge and repository files.
 
 Workflow evals assess grounded answers, valid evidence, useful diagnosis, unsupported findings, and skill relevance. Each initial skill has positive and negative trigger cases. Do not treat two agreeing model reviewers as proof of correctness; require evidence and independent executable checks where applicable.
 

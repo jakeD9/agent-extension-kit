@@ -1,8 +1,13 @@
 # S11 — Durable Mock Coding Jobs
 
-Depends on S10. Add versioned run, step, coding-job, completion-outbox, action-intent, and artifact
-contracts plus Mongo validators/indexes, leased workers, idempotent submission, status/result,
-cancellation, deadlines, attempt records, and reconciliation. Implement `MockCodingHarness` and a
-mock executor without repository access or publication. Verify crash windows before and after
-submission, duplicate notifications, terminal states, structured-result rejection, cancellation,
-timeout, restart recovery, and once-visible completion.
+Depends on S10. Add only the durable `runs` and `coding_jobs` records needed for one mock coding-job
+path, with versioned contracts, Mongo validators/indexes, atomic claim and lease renewal,
+idempotent submission, status/result, cancellation, deadline handling, and restart recovery. A job
+pins the exact Git revision and skill lock selected when it is created. Implement `MockCodingHarness`
+and a mock executor without repository access or publication.
+
+Do not introduce generalized workflow-step, action-intent, or completion-outbox frameworks unless a
+demonstrated crash boundary requires one. Prefer explicit transitions on the two records and
+reconcile ambiguous submission or completion before retrying. Verify concurrent claim, crash before
+and after submission, duplicate completion, terminal states, structured-result rejection,
+cancellation, timeout, lease expiry, restart recovery, and one visible completion.

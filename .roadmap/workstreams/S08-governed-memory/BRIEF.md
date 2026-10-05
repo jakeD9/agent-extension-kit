@@ -1,6 +1,6 @@
 # S08 — Domain Authority and Shared Working Memory Correction
 
-Depends on S06. This is active corrective work and blocks S09. Align all delivered context behavior
+Depends on S06. Completed by the S08 correction. It aligned all delivered context behavior
 with the normative domain-authority dogma: one deployment serves one small trusted team/domain;
 project/domain admission grants every developer use of the complete knowledge, skill, and shared
 working-memory corpus. Remove per-artifact `access_groups`, content `approver` roles, proposals, and

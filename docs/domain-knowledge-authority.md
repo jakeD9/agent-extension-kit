@@ -65,8 +65,10 @@ working-memory record.
 
 Trusting a developer with domain content does not authorize every external side effect. Existing
 capability controls remain required for branch publication, pull/merge request creation, review
-publication, merge, deployment, production mutation, secrets, and data migration. These approvals
-are bound to the action and target; they are not content-access controls.
+publication, merge, deployment, production mutation, secrets, and data migration. An explicit
+developer request or configured automation authorizes only its bounded action and target, using the
+minimum required credentials. This does not imply stored approval objects or a second internal
+approval workflow, and it is not a content-access control.
 
 Repository content is also untrusted input to the model. Canonical status establishes review and
 precedence, not permission to invoke tools or bypass supervisor policy.

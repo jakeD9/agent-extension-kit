@@ -5,6 +5,13 @@ slice's acceptance criteria have fresh verification evidence. The canonical Genk
 brief and the workstream artifacts under `.roadmap/workstreams/` supply fresh-session context.
 The domain-authority dogma and required CI publication contract are normative for all slices.
 
+Before any incomplete slice starts, pause for a technical check-in covering its observable outcome,
+interfaces and storage, mechanism and data flow, failure/restart behavior, necessary safety
+boundaries, explicit exclusions, verification, and unresolved decisions. Implementation begins only
+after the team approves that boundary.
+
+## Core v1 path
+
 - [x] **S01: Python cited-search tracer** `risk:high` `depends:[]`
   > After this: an authenticated REST request returns authorized, revision-pinned fixture knowledge from the Python service.
 - [x] **S02: Persistent context boundary** `risk:medium` `depends:[S01]`
@@ -22,11 +29,11 @@ The domain-authority dogma and required CI publication contract are normative fo
 - [x] **S08: Domain authority and shared working memory correction** `risk:high` `depends:[S06]`
   > After this: project/domain admission exposes the complete corpus, Git remains sole canonical authority, and team-wide supplemental memory has a provenance-rich lifecycle without approvers or per-record groups.
 - [ ] **S09: Genkit coordinator tracer** `risk:high` `depends:[S06,S07,S08]`
-  > After this: a provider-neutral runtime turn uses an authorized locked skill projection and scoped context tools to return structured cited output through the configured OpenAI model adapter.
+  > After this: a narrow diagnostic/CI probe executes one stateless hosted Genkit turn through the configured OpenAI model adapter, selected immutable skills, and project-bound read-only context tools, returning evidence-derived citations and usage in provider-neutral JSON.
 - [ ] **S10: Durable Genkit conversations** `risk:high` `depends:[S09]`
-  > After this: multi-turn state survives restart, same-thread turns serialize, and stale workers cannot update a conversation.
+  > After this: ordered turns plus a bounded summary survive restart, same-conversation turns serialize, and every turn records the exact Git revision and skill lock it used while later turns may adopt newer canonical knowledge.
 - [ ] **S11: Durable mock coding jobs** `risk:high` `depends:[S10]`
-  > After this: a mock coding job can be submitted, observed, cancelled, recovered after restart, and completed once visibly.
+  > After this: minimal `runs` and `coding_jobs` records let a mock job be atomically claimed, observed, cancelled, timed out, recovered after restart, and completed once visibly against one pinned revision.
 - [ ] **S12: Mock diagnose-and-fix workflow** `risk:high` `depends:[S08,S09,S11]`
   > After this: the coordinator retrieves the fixture ADR and skill, suspends for a mock coding job, resumes with verification, and produces one mock draft-PR result.
 - [ ] **S13: Supervised Codex runner** `risk:high` `depends:[S12]`
@@ -37,22 +44,28 @@ The domain-authority dogma and required CI publication contract are normative fo
   > After this: one Slack request asynchronously completes the fixture coding workflow with explicit progress, failure, and mock-publication outcomes.
 - [ ] **S16: Exact-revision sequential review** `risk:high` `depends:[S13]`
   > After this: a read-only review covers one exact head SHA and stale or unsupported findings cannot be published as current.
+- [ ] **S20: Git publication adapter** `risk:high` `depends:[S15,S16]`
+  > After this: an explicit developer request or configured automation can publish a verified branch, draft PR, or review through one provider-neutral adapter using supervisor-owned credentials and idempotent reconciliation.
+- [ ] **S23: Focused v1 hardening** `risk:high` `depends:[S20]`
+  > After this: the core context-to-Genkit-to-Slack-to-Codex-to-publication path passes bounded security, restart, cancellation, injection, and side-effect reconciliation suites.
+- [ ] **S24: Domain adoption and CI publication guide** `risk:medium` `depends:[S20]`
+  > After this: a GitHub or GitLab team can map its domain into the generic exact-SHA Git-to-Mongo publication and reconciliation contract without provider-specific kit configuration.
+
+## Optional expansion path
+
+These slices add useful scale or portability after core v1. They do not gate S23 hardening or S24
+adoption documentation.
+
 - [ ] **S17: Event-driven review projection** `risk:medium` `depends:[S14,S16]`
   > After this: repeated Slack events review one revision once, freeze each automation run's skill lock, and retain independently repairable publication and reaction state.
 - [ ] **S18: Scheduled reconciliation** `risk:high` `depends:[S17]`
   > After this: a leased sweep recovers missed reviews and repairs projections without losing failed targets or duplicating reviews.
 - [ ] **S19: Bounded parallel review** `risk:high` `depends:[S16]`
   > After this: correctness and security reviewers run in separate read-only jobs and produce one evidence-backed, restart-recoverable result.
-- [ ] **S20: Approval and real publication boundary** `risk:high` `depends:[S15,S19]`
-  > After this: only capability-bound, independently verified results can be published using supervisor-owned credentials.
 - [ ] **S21: Genkit provider portability proof** `risk:medium` `depends:[S09]`
   > After this: configured OpenAI, Anthropic, and Gemini integrations satisfy shared contracts with explicit capability differences and no silent fallback.
 - [ ] **S22: Claude harness portability proof** `risk:medium` `depends:[S13]`
   > After this: the same frozen-lock supervised coding contract executes through Claude without coordinator or workflow changes.
-- [ ] **S23: Security, recovery, and assembled-system proof** `risk:high` `depends:[S18,S20,S21,S22]`
-  > After this: all three images pass end-to-end fixture, security, injection, cancellation, restart, and side-effect reconciliation suites.
-- [ ] **S24: Domain adoption and CI publication guide** `risk:medium` `depends:[S23]`
-  > After this: a GitHub or GitLab team can map its domain into the generic exact-SHA Git-to-Mongo publication and reconciliation contract without provider-specific kit configuration.
 
 ## Global completion checks
 

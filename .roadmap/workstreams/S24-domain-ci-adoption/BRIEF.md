@@ -1,10 +1,11 @@
 # S24 — Domain Adoption and CI Publication Guide
 
-Depends on S23. Produce a cold-reader adoption walkthrough for a specific trusted team/domain using
-the normative domain-authority dogma and the platform-neutral required-CI contract. Show how an
+Depends on S20 and may proceed in parallel with S23. Produce a cold-reader adoption walkthrough for
+a specific trusted team/domain using the normative domain-authority dogma and the platform-neutral
+required-CI contract. Show how an
 operator identifies the protected Git source, project/domain admission boundary, knowledge roots,
-skill catalog, context-service deployment, Mongo projection credentials, and external-action
-policies without adding provider-specific CI YAML to the kit.
+skill catalog, context-service deployment, Mongo projection credentials, and configured publication
+permissions without adding provider-specific CI YAML to the kit.
 
 The walkthrough must cover both GitHub and GitLab concept mapping while keeping one implementation
 contract: merge-triggered exact-SHA validation/build/staging/atomic activation plus scheduled

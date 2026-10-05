@@ -14,7 +14,10 @@
   a healthy non-root `team-context` container, an authenticated local MongoDB replica set, complete
   admitted-domain knowledge/skills, and team-wide supplemental working memory with Git precedence
 - Known blockers: none
-- Next eligible slice: S09; completing it unlocks S10 and S11
+- Next eligible slice: S09. Its approved boundary is one stateless hosted-runtime tracer exposed by
+  a diagnostic/CI JSON probe; it does not replace local Codex/Claude skills and MCP workflows.
+- Delivery tracks: core v1 is S09–S16, S20, S23, and S24. S17–S19, S21, and S22 are optional
+  expansion work and do not gate core hardening or adoption documentation.
 - Canonical brief: `.roadmap/team-agent-architecture-brief-genkit.md`
 - Skills distribution requirements: `.roadmap/skills-distribution-addendum.md`
 - Domain authority dogma: `docs/domain-knowledge-authority.md`
