@@ -20,23 +20,9 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class Authority(StrEnum):
-    APPROVED = "approved"
-    PROPOSED = "proposed"
-    SUPERSEDED = "superseded"
-
-
-class MemoryProposalStatus(StrEnum):
-    PROPOSED = "proposed"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    EXPIRED = "expired"
-
-
 class MemoryAuditAction(StrEnum):
-    PROPOSED = "proposed"
-    APPROVED = "approved"
-    REJECTED = "rejected"
+    CREATED = "created"
+    UPDATED = "updated"
     EXPIRED = "expired"
     SUPERSEDED = "superseded"
 
@@ -66,7 +52,7 @@ class KnowledgeResult(ContractModel):
     title: str
     excerpt: str
     score: float
-    authority: Authority
+    canonicality: Literal["canonical"] = "canonical"
     citation: Citation
 
 
@@ -75,11 +61,8 @@ class KnowledgeSearchResponse(ContractModel):
     request_id: str
 
 
-class MemoryProposalCreateRequest(ContractModel):
+class SharedMemoryCreateRequest(ContractModel):
     project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
-    access_groups: list[Annotated[str, Field(min_length=1, max_length=128)]] = Field(
-        min_length=1, max_length=50
-    )
     title: str = Field(min_length=1, max_length=300)
     body: str = Field(min_length=1, max_length=MAX_MEMORY_BODY_LENGTH)
     provenance: Citation
@@ -87,40 +70,17 @@ class MemoryProposalCreateRequest(ContractModel):
     expires_at: AwareDatetime
     supersedes_memory_id: str | None = Field(default=None, min_length=1, max_length=128)
 
-    @model_validator(mode="after")
-    def unique_access_groups(self) -> "MemoryProposalCreateRequest":
-        if len(set(self.access_groups)) != len(self.access_groups):
-            raise ValueError("Memory access groups must be unique")
-        return self
 
-
-class MemoryProposal(ContractModel):
-    schema_version: Literal["1"] = "1"
-    id: str = Field(min_length=1, max_length=128)
-    project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
-    access_groups: list[str]
-    title: str
-    body: str
+class SharedMemoryUpdateRequest(ContractModel):
+    expected_revision: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1, max_length=MAX_MEMORY_BODY_LENGTH)
     provenance: Citation
-    evidence: list[Citation]
-    author_id: str = Field(min_length=1, max_length=256)
-    status: MemoryProposalStatus
+    evidence: list[Citation] = Field(min_length=1, max_length=20)
     expires_at: AwareDatetime
-    supersedes_memory_id: str | None = None
-    memory_id: str | None = None
-    decision_reason: str | None = None
-    decision_author_id: str | None = None
-    created_at: datetime
-    updated_at: datetime
-    revision: int = Field(ge=1)
 
 
-class MemoryProposalResponse(ContractModel):
-    proposal: MemoryProposal
-    request_id: str
-
-
-class MemoryDecisionRequest(ContractModel):
+class MemoryExpireRequest(ContractModel):
     expected_revision: int = Field(ge=1)
     reason: str = Field(min_length=1, max_length=2_000)
 
@@ -128,27 +88,25 @@ class MemoryDecisionRequest(ContractModel):
 class TeamMemory(ContractModel):
     schema_version: Literal["1"] = "1"
     id: str = Field(min_length=1, max_length=128)
-    proposal_id: str = Field(min_length=1, max_length=128)
     project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
-    access_groups: list[str]
     title: str
     body: str
     provenance: Citation
     evidence: list[Citation]
     author_id: str
-    approved_by: str
-    authority: Literal[Authority.APPROVED] = Authority.APPROVED
+    last_modified_by: str
+    canonicality: Literal["supplemental"] = "supplemental"
     expires_at: AwareDatetime
     supersedes_memory_id: str | None = None
     superseded_by_memory_id: str | None = None
     expired_at: AwareDatetime | None = None
     created_at: datetime
+    updated_at: datetime
     revision: int = Field(ge=1)
 
 
-class MemoryDecisionResponse(ContractModel):
-    proposal: MemoryProposal
-    memory: TeamMemory | None = None
+class SharedMemoryResponse(ContractModel):
+    memory: TeamMemory
     request_id: str
 
 
@@ -180,9 +138,8 @@ class MemoryAuditEvent(ContractModel):
     action: MemoryAuditAction
     actor_id: str
     project: str
-    proposal_id: str
-    memory_id: str | None = None
-    proposal_revision: int = Field(ge=1)
+    memory_id: str
+    memory_revision: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1, max_length=256)
     reason: str | None = None
     occurred_at: datetime
@@ -190,7 +147,7 @@ class MemoryAuditEvent(ContractModel):
 
 class MemoryAuditListRequest(ContractModel):
     project: str = Field(min_length=1, max_length=MAX_PROJECT_LENGTH)
-    proposal_id: str = Field(min_length=1, max_length=128)
+    memory_id: str = Field(min_length=1, max_length=128)
     limit: int = Field(default=50, ge=1, le=100)
     cursor: str | None = Field(default=None, min_length=1, max_length=MAX_MEMORY_CURSOR_LENGTH)
 
@@ -222,7 +179,6 @@ class SkillSummary(ContractModel):
     description: str
     version: str
     projects: list[str]
-    access_groups: list[str]
     allowed_tools: list[str]
     citation: Citation
 
@@ -357,7 +313,6 @@ __all__ = [
     "MAX_REVISION_LENGTH",
     "MAX_SKILL_NAME_LENGTH",
     "SKILL_NAME_PATTERN",
-    "Authority",
     "Citation",
     "ErrorDetail",
     "ErrorResponse",
@@ -369,17 +324,15 @@ __all__ = [
     "MemoryAuditEvent",
     "MemoryAuditListRequest",
     "MemoryAuditResponse",
-    "MemoryDecisionRequest",
-    "MemoryDecisionResponse",
+    "MemoryExpireRequest",
     "MemoryMutationResponse",
-    "MemoryProposal",
-    "MemoryProposalCreateRequest",
-    "MemoryProposalResponse",
-    "MemoryProposalStatus",
     "MemorySearchItem",
     "MemorySearchRequest",
     "MemorySearchResponse",
     "Principal",
+    "SharedMemoryCreateRequest",
+    "SharedMemoryResponse",
+    "SharedMemoryUpdateRequest",
     "SkillDetail",
     "SkillFileManifest",
     "SkillGetRequest",

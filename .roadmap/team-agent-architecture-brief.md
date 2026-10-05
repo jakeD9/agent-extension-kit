@@ -1,5 +1,9 @@
 # Team Agent Architecture: Google ADK Runtime and Portable Extension Kit
 
+> **Superseded archive:** This ADK plan is not an implementation contract. Use the canonical Genkit
+> brief and the normative domain-authority dogma. In particular, ignore this file's memory-approval,
+> selected-memory, and per-artifact access-group design.
+
 Status: Superseded by `.roadmap/team-agent-architecture-brief-genkit.md`; retained as the ADK
 planning record only
 Updated: 2026-10-03

@@ -1,15 +1,22 @@
 # Agent Extension Kit
 
-A forkable reference implementation for giving team agents approved knowledge, reusable skills,
-governed memory, and narrowly scoped tools. Genkit Python will coordinate hosted agents through an
+A forkable reference implementation for giving one trusted domain team canonical Git knowledge,
+reusable skills, supplemental shared working memory, and narrowly scoped tools. Genkit Python will coordinate hosted agents through an
 initial OpenAI model path, while the extension kit remains usable by local Codex and Claude clients
 without Genkit or database credentials.
 
-The migration is intentionally incremental. The current implementation provides authenticated,
-revision-pinned MongoDB knowledge search plus authorized skill discovery/loading from a pinned
-Git/filesystem catalog, immutable package downloads, a shared verified pull client/installer,
-JSON-first context CLI, project-scoped stdio MCP adapter, and transaction-backed governed memory.
-Genkit coordinator behavior, coding runners, Slack, and automations arrive in later roadmap slices.
+The migration is intentionally incremental. S01–S08 delivered authenticated, revision-pinned MongoDB
+knowledge search, Git-backed skill distribution, local transports, and transactional memory. A
+corrective S08 pass replaced their per-artifact groups and memory approval workflow with one
+project/domain admission boundary and team-wide supplemental working memory. Genkit coordinator
+behavior, coding runners, Slack, and
+automations arrive in later roadmap slices.
+
+The protected, pinned Git revision is the sole canonical knowledge and skill source. MongoDB holds a
+rebuildable search projection and non-canonical working memory. See
+[Domain Knowledge Authority](docs/domain-knowledge-authority.md) for this architecture's normative
+dogma and [Required CI Implementation](docs/required-ci-implementations.md) for the generic
+GitHub/GitLab-compatible publication contract.
 
 ## Quick start
 
@@ -33,9 +40,12 @@ curl -s 'http://localhost:3000/v1/skills/diagnose-and-fix?project=event-ingestio
   -H 'Authorization: Bearer dev-token'
 ```
 
-`/ready` returns 503 until MongoDB is reachable, migrations have applied, and the configured Git
-knowledge revision has synchronized. Skill discovery is rebuilt directly from that pinned checkout.
-To run the process directly, start MongoDB first, load `.env`, and use
+`/ready` returns 503 until MongoDB is reachable, migrations have applied, and the active knowledge
+revision exactly matches the skill catalog's configured Git revision. Production startup is
+read-only for publication. The example `.env` explicitly enables local fixture bootstrap and a
+mutable development revision; do not carry those two flags into production. Skill discovery is
+rebuilt directly from the configured checkout. To run the process directly, start MongoDB first,
+load `.env`, and use
 `uv run team-context-service`.
 
 ## Pulling skills
@@ -77,9 +87,9 @@ uv run team-context skill get diagnose-and-fix --project event-ingestion
 uv run team-context memory search "vendor retry key" --project event-ingestion
 ```
 
-`team-context-mcp` exposes knowledge/skill retrieval plus authoritative memory search and sourced
-memory proposals as five stdio tools. It deliberately exposes no approval, rejection, expiry, or
-audit tool. The checked-in `.codex/config.toml` and `.mcp.json` are project-scoped launch examples;
+The corrected `team-context-mcp` surface exposes knowledge/skill retrieval plus supplemental memory
+search and creation as five stdio tools. It deliberately exposes no memory update, expiry, audit, or
+canonical-promotion tool. The checked-in `.codex/config.toml` and `.mcp.json` are project-scoped launch examples;
 set `TEAM_AGENT_CONTEXT_URL` and `TEAM_AGENT_TOKEN` in the host environment. See
 `docs/local-context.md` for tool behavior, pagination, errors, and verification.
 
@@ -89,6 +99,8 @@ set `TEAM_AGENT_CONTEXT_URL` and `TEAM_AGENT_TOKEN` in the host environment. See
 - `packages/` contains provider-neutral contracts and application ports.
 - `extension/` is the replaceable, Git-owned knowledge and skill pack.
 - `docs/architecture.md` records trust boundaries and implementation status.
+- `docs/domain-knowledge-authority.md` defines the normative content-authority dogma.
+- `docs/required-ci-implementations.md` defines exact-SHA Git-to-Mongo publication requirements.
 - `ROADMAP.md` is the dependency-ordered delivery ledger.
 - `.roadmap/workstreams/STATUS.md` tells a fresh session what to work on next.
 - `.agents/skills/developing-genkit-python/` contains the project-scoped Genkit development skill.

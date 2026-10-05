@@ -14,6 +14,7 @@ def test_context_service_rejects_runtime_database_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CONTENT_PATH", str(EXTENSION_PATH))
+    monkeypatch.setenv("CONTENT_REVISION", "a" * 40)
     monkeypatch.setenv("TEAM_CONTEXT_MONGODB_URI", "mongodb://context.invalid")
     monkeypatch.setenv("TEAM_CONTEXT_MONGODB_DATABASE", "agent_runtime")
     monkeypatch.setenv("AGENT_RUNTIME_MONGODB_DATABASE", "agent_runtime")
@@ -32,7 +33,7 @@ def test_context_service_builds_skill_catalog_from_git_pack(
         return FastAPI()
 
     monkeypatch.setenv("CONTENT_PATH", str(EXTENSION_PATH))
-    monkeypatch.setenv("CONTENT_REVISION", "fixture-revision")
+    monkeypatch.setenv("CONTENT_REVISION", "a" * 40)
     monkeypatch.setenv("TEAM_CONTEXT_MONGODB_URI", "mongodb://context.invalid")
     monkeypatch.setattr(context_main, "build_app", capture_dependencies)
 
@@ -40,3 +41,18 @@ def test_context_service_builds_skill_catalog_from_git_pack(
 
     dependencies = captured["dependencies"]
     assert isinstance(dependencies.skill_catalog, GitSkillCatalog)
+
+
+def test_context_service_requires_immutable_revision_without_explicit_dev_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CONTENT_PATH", str(EXTENSION_PATH))
+    monkeypatch.setenv("CONTENT_REVISION", "working-tree")
+    monkeypatch.setenv("TEAM_CONTEXT_MONGODB_URI", "mongodb://context.invalid")
+
+    with pytest.raises(ValueError, match="immutable"):
+        create_app_from_env()
+
+    monkeypatch.setenv("TEAM_AGENT_ALLOW_MUTABLE_CONTENT_REVISION", "true")
+    app = create_app_from_env()
+    assert isinstance(app, FastAPI)

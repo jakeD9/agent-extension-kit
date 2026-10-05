@@ -57,7 +57,6 @@ def test_lists_authorized_skill_metadata_without_body(client: TestClient) -> Non
             ),
             "version": "1",
             "projects": ["event-ingestion"],
-            "access_groups": ["engineering"],
             "allowed_tools": ["search_team_knowledge", "get_team_document"],
             "citation": {
                 "repository": "agent-extension-kit-sample",
@@ -68,6 +67,39 @@ def test_lists_authorized_skill_metadata_without_body(client: TestClient) -> Non
     ]
     assert "body" not in response.json()["items"][0]
     assert response.headers["x-request-id"] == response.json()["request_id"]
+
+
+def test_content_routes_fail_closed_when_knowledge_and_skill_revisions_are_incoherent() -> None:
+    pack = load_content_pack(EXTENSION_PATH, "skill-revision-a")
+    auth = StaticBearerAuthenticator(
+        {"token": Principal(id="developer", projects=["event-ingestion"])}
+    )
+
+    async def mismatched_projection() -> tuple[str, dict[str, object]]:
+        return "not_ready", {"source_revision": "knowledge-revision-b"}
+
+    app = build_app(
+        AppDependencies(
+            pack=pack,
+            authenticator=auth,
+            readiness=mismatched_projection,
+        )
+    )
+    with TestClient(app) as guarded:
+        knowledge = guarded.post(
+            "/v1/knowledge/search",
+            headers={"authorization": "Bearer token"},
+            json={"query": "idempotency", "project": "event-ingestion"},
+        )
+        skills = guarded.get(
+            "/v1/skills?project=event-ingestion",
+            headers={"authorization": "Bearer token"},
+        )
+        health = guarded.get("/health")
+
+    assert knowledge.status_code == skills.status_code == 503
+    assert knowledge.json()["error"]["code"] == "service_unavailable"
+    assert health.status_code == 200
 
 
 def test_loads_authorized_skill_body_with_revision_provenance(client: TestClient) -> None:
@@ -394,7 +426,7 @@ def test_health_and_readiness_report_loaded_pack(client: TestClient) -> None:
     }
 
 
-def test_mongo_failure_blocks_readiness_but_not_git_skill_discovery() -> None:
+def test_mongo_failure_blocks_readiness_and_all_content_discovery() -> None:
     pack = load_content_pack(EXTENSION_PATH, "fixture-revision")
     authenticator = StaticBearerAuthenticator(
         {
@@ -433,7 +465,7 @@ def test_mongo_failure_blocks_readiness_but_not_git_skill_discovery() -> None:
             "/v1/skills/diagnose-and-fix?project=event-ingestion",
             headers={"authorization": "Bearer engineering-token"},
         )
-        assert skill_response.status_code == 200
-        assert skill_response.json()["citation"]["revision"] == "fixture-revision"
+        assert skill_response.status_code == 503
+        assert skill_response.json()["error"]["code"] == "service_unavailable"
 
     assert events == ["started", "stopped"]

@@ -5,68 +5,41 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from team_agent_auth import StaticBearerAuthenticator
-from team_agent_contracts import MemoryProposalCreateRequest, Principal
-from team_context_core import InMemoryGovernedMemory
+from team_agent_contracts import Principal, SharedMemoryCreateRequest
+from team_context_core import InMemorySharedMemory
 from team_context_service import AppDependencies, build_app, load_content_pack
 
 EXTENSION_PATH = Path(__file__).parents[3] / "extension"
 
 
-def _client(memory: InMemoryGovernedMemory | None = None) -> TestClient:
+def _client(memory: InMemorySharedMemory | None = None) -> TestClient:
     pack = load_content_pack(EXTENSION_PATH, "fixture-revision")
     auth = StaticBearerAuthenticator(
         {
-            "author": Principal(
-                id="author-1", groups=["engineering"], projects=["event-ingestion"]
+            "developer": Principal(
+                id="developer-1", groups=["engineering"], projects=["event-ingestion"]
             ),
-            "approver": Principal(
-                id="approver-1",
-                groups=["engineering"],
-                projects=["event-ingestion"],
-                roles=["approver"],
+            "teammate": Principal(
+                id="developer-2", groups=["different-group"], projects=["event-ingestion"]
             ),
-            "multi-author": Principal(
-                id="author-2",
-                groups=["engineering", "security"],
-                projects=["event-ingestion"],
-            ),
-            "multi-approver": Principal(
-                id="approver-2",
-                groups=["engineering", "security"],
-                projects=["event-ingestion"],
-                roles=["approver"],
-            ),
-            "partial-approver": Principal(
-                id="approver-3",
-                groups=["engineering"],
-                projects=["event-ingestion"],
-                roles=["approver"],
-            ),
-            "outsider": Principal(id="outsider", groups=["other"], projects=["other"]),
+            "outsider": Principal(id="outsider", groups=["engineering"], projects=["other"]),
         }
     )
     return TestClient(
         build_app(
             AppDependencies(
-                pack=pack,
-                authenticator=auth,
-                governed_memory=memory or InMemoryGovernedMemory(),
+                pack=pack, authenticator=auth, shared_memory=memory or InMemorySharedMemory()
             )
         )
     )
 
 
-def _proposal_body(**changes: object) -> dict[str, object]:
+def _memory_body(**changes: object) -> dict[str, object]:
     body: dict[str, object] = {
         "project": "event-ingestion",
-        "access_groups": ["engineering"],
         "title": "Vendor retries require a stable event key",
         "body": "Use the vendor event identifier as the idempotency key.",
-        "provenance": {
-            "repository": "org/incidents",
-            "path": "INC-42.md",
-            "revision": "abc123",
-        },
+        "provenance": {"repository": "org/incidents", "path": "INC-42.md", "revision": "abc123"},
         "evidence": [
             {
                 "repository": "org/service",
@@ -81,261 +54,141 @@ def _proposal_body(**changes: object) -> dict[str, object]:
     return body
 
 
-def _propose(client: TestClient, *, key: str = "proposal-key") -> dict[str, object]:
+def _create(client: TestClient, *, key: str = "create-key") -> dict[str, object]:
     response = client.post(
-        "/v1/memory-proposals",
-        headers={"authorization": "Bearer author", "idempotency-key": key},
-        json=_proposal_body(),
+        "/v1/memories",
+        headers={"authorization": "Bearer developer", "idempotency-key": key},
+        json=_memory_body(),
     )
     assert response.status_code == 201
-    return response.json()["proposal"]  # type: ignore[no-any-return]
+    return response.json()["memory"]  # type: ignore[no-any-return]
 
 
-def test_approved_memory_becomes_authoritative_with_preserved_sources() -> None:
+def _update_body(memory: dict[str, object], **changes: object) -> dict[str, object]:
+    body = _memory_body(**changes)
+    body.pop("project")
+    body["expected_revision"] = memory["revision"]
+    return body
+
+
+def test_developer_creates_immediately_searchable_supplemental_memory() -> None:
     client = _client()
-    proposal = _propose(client)
-
-    approved = client.post(
-        f"/v1/memory-proposals/{proposal['id']}/approve",
-        headers={"authorization": "Bearer approver", "idempotency-key": "approve-key"},
-        json={"expected_revision": 1, "reason": "Evidence reproduced."},
-    )
+    memory = _create(client)
     search = client.post(
         "/v1/memories/search",
-        headers={"authorization": "Bearer author"},
+        headers={"authorization": "Bearer teammate"},
         json={"query": "stable event key", "project": "event-ingestion"},
     )
-
-    assert approved.status_code == 200
-    assert approved.json()["memory"]["provenance"] == _proposal_body()["provenance"]
-    assert approved.json()["memory"]["evidence"] == _proposal_body()["evidence"]
+    assert memory["canonicality"] == "supplemental"
+    assert memory["provenance"] == _memory_body()["provenance"]
     assert search.status_code == 200
-    assert [item["id"] for item in search.json()["items"]] == [approved.json()["memory"]["id"]]
+    assert [item["id"] for item in search.json()["items"]] == [memory["id"]]
 
 
-def test_proposal_retry_is_exact_and_key_reuse_with_other_input_conflicts() -> None:
+def test_create_is_idempotent_and_conflicting_key_reuse_fails() -> None:
     client = _client()
-    body = _proposal_body()
-    first = client.post(
-        "/v1/memory-proposals",
-        headers={"authorization": "Bearer author", "idempotency-key": "same-key"},
-        json=body,
-    )
-    replay = client.post(
-        "/v1/memory-proposals",
-        headers={"authorization": "Bearer author", "idempotency-key": "same-key"},
-        json=body,
-    )
+    headers = {"authorization": "Bearer developer", "idempotency-key": "same-key"}
+    body = _memory_body()
+    first = client.post("/v1/memories", headers=headers, json=body)
+    replay = client.post("/v1/memories", headers=headers, json=body)
     conflict = client.post(
-        "/v1/memory-proposals",
-        headers={"authorization": "Bearer author", "idempotency-key": "same-key"},
-        json={**body, "title": "Different claim"},
+        "/v1/memories", headers=headers, json={**body, "title": "Different claim"}
     )
-
     assert first.status_code == replay.status_code == 201
-    assert first.json()["proposal"] == replay.json()["proposal"]
+    assert first.json()["memory"] == replay.json()["memory"]
     assert conflict.status_code == 409
-    assert conflict.json()["error"]["code"] == "memory_conflict"
 
 
-def test_model_author_cannot_promote_and_hidden_proposals_are_indistinguishable() -> None:
+def test_any_project_member_can_update_and_expire_with_cas_and_audit() -> None:
     client = _client()
-    proposal = _propose(client)
-    decision = {"expected_revision": 1, "reason": "self promotion"}
+    memory = _create(client)
+    update_body = _update_body(memory, title="Updated retry guidance")
+    updated_response = client.put(
+        f"/v1/memories/{memory['id']}",
+        headers={"authorization": "Bearer teammate", "idempotency-key": "update-key"},
+        json=update_body,
+    )
+    updated = updated_response.json()["memory"]
+    stale = client.put(
+        f"/v1/memories/{memory['id']}",
+        headers={"authorization": "Bearer developer", "idempotency-key": "stale-key"},
+        json=update_body,
+    )
+    expired = client.post(
+        f"/v1/memories/{memory['id']}/expire",
+        headers={"authorization": "Bearer developer", "idempotency-key": "expire-key"},
+        json={"expected_revision": updated["revision"], "reason": "Vendor changed."},
+    )
+    audit = client.get(
+        f"/v1/memories/{memory['id']}/audit?project=event-ingestion",
+        headers={"authorization": "Bearer teammate"},
+    )
+    assert updated_response.status_code == 200
+    assert updated["last_modified_by"] == "developer-2"
+    assert stale.status_code == 409
+    assert expired.status_code == 200
+    assert [item["action"] for item in audit.json()["items"]] == ["created", "updated", "expired"]
 
-    author = client.post(
-        f"/v1/memory-proposals/{proposal['id']}/approve",
-        headers={"authorization": "Bearer author", "idempotency-key": "author-approve"},
-        json=decision,
-    )
-    hidden = client.post(
-        f"/v1/memory-proposals/{proposal['id']}/approve",
-        headers={"authorization": "Bearer outsider", "idempotency-key": "outside-approve"},
-        json=decision,
-    )
-    missing = client.post(
-        "/v1/memory-proposals/missing/approve",
-        headers={"authorization": "Bearer outsider", "idempotency-key": "missing-approve"},
-        json=decision,
-    )
 
-    assert author.status_code == 403
+def test_create_can_atomically_supersede_current_memory() -> None:
+    client = _client()
+    old = _create(client, key="old")
+    replacement = client.post(
+        "/v1/memories",
+        headers={"authorization": "Bearer teammate", "idempotency-key": "replacement"},
+        json=_memory_body(
+            title="Retries use the delivery token",
+            body="Use the delivery token after migration.",
+            supersedes_memory_id=old["id"],
+        ),
+    ).json()["memory"]
+    search = client.post(
+        "/v1/memories/search",
+        headers={"authorization": "Bearer developer"},
+        json={"query": "delivery token migration", "project": "event-ingestion"},
+    )
+    assert [item["id"] for item in search.json()["items"]] == [replacement["id"]]
+
+
+def test_outsider_cannot_create_and_cannot_discover_existing_memory() -> None:
+    client = _client()
+    memory = _create(client)
+    denied_create = client.post(
+        "/v1/memories",
+        headers={"authorization": "Bearer outsider", "idempotency-key": "outside"},
+        json=_memory_body(),
+    )
+    hidden = client.put(
+        f"/v1/memories/{memory['id']}",
+        headers={"authorization": "Bearer outsider", "idempotency-key": "outside-update"},
+        json=_update_body(memory),
+    )
+    missing = client.put(
+        "/v1/memories/missing",
+        headers={"authorization": "Bearer outsider", "idempotency-key": "missing-update"},
+        json=_update_body(memory),
+    )
+    assert denied_create.status_code == 403
     assert hidden.status_code == missing.status_code == 404
     assert hidden.json()["error"]["code"] == missing.json()["error"]["code"]
 
 
-def test_rejected_and_expired_memories_are_not_authoritative_and_audit_is_append_only() -> None:
+def test_memory_api_authenticates_before_validation_and_removes_approval_routes() -> None:
     client = _client()
-    rejected = _propose(client, key="reject-proposal")
-    rejection = client.post(
-        f"/v1/memory-proposals/{rejected['id']}/reject",
-        headers={"authorization": "Bearer approver", "idempotency-key": "reject-key"},
-        json={"expected_revision": 1, "reason": "Evidence did not reproduce."},
-    )
-    approved_proposal = _propose(client, key="expire-proposal")
-    approval = client.post(
-        f"/v1/memory-proposals/{approved_proposal['id']}/approve",
-        headers={"authorization": "Bearer approver", "idempotency-key": "expire-approve"},
-        json={"expected_revision": 1, "reason": "Initially valid."},
-    )
-    memory = approval.json()["memory"]
-    expiration = client.post(
-        f"/v1/memories/{memory['id']}/expire",
-        headers={"authorization": "Bearer approver", "idempotency-key": "expire-key"},
-        json={"expected_revision": memory["revision"], "reason": "Vendor behavior changed."},
-    )
-    search = client.post(
-        "/v1/memories/search",
-        headers={"authorization": "Bearer author"},
-        json={"query": "stable event key", "project": "event-ingestion"},
-    )
-    audit = client.get(
-        f"/v1/memory-proposals/{approved_proposal['id']}/audit?project=event-ingestion",
-        headers={"authorization": "Bearer author"},
-    )
-
-    assert rejection.status_code == 200
-    assert rejection.json()["proposal"]["status"] == "rejected"
-    assert expiration.status_code == 200
-    assert search.json()["items"] == []
-    assert [item["action"] for item in audit.json()["items"]] == [
-        "proposed",
-        "approved",
-        "expired",
-    ]
-
-
-def test_approving_replacement_supersedes_old_memory_atomically() -> None:
-    client = _client()
-    old_proposal = _propose(client, key="old-proposal")
-    old_memory = client.post(
-        f"/v1/memory-proposals/{old_proposal['id']}/approve",
-        headers={"authorization": "Bearer approver", "idempotency-key": "old-approve"},
-        json={"expected_revision": 1, "reason": "valid"},
-    ).json()["memory"]
-    replacement_response = client.post(
-        "/v1/memory-proposals",
-        headers={"authorization": "Bearer author", "idempotency-key": "replacement-proposal"},
-        json=_proposal_body(
-            title="Retries now use the delivery token",
-            body="Use the delivery token after the vendor migration.",
-            supersedes_memory_id=old_memory["id"],
-        ),
-    )
-    replacement = replacement_response.json()["proposal"]
-    new_memory = client.post(
-        f"/v1/memory-proposals/{replacement['id']}/approve",
-        headers={"authorization": "Bearer approver", "idempotency-key": "replacement-approve"},
-        json={"expected_revision": 1, "reason": "migration verified"},
-    ).json()["memory"]
-    search = client.post(
-        "/v1/memories/search",
-        headers={"authorization": "Bearer author"},
-        json={"query": "vendor migration delivery token", "project": "event-ingestion"},
-    )
-
-    assert [item["id"] for item in search.json()["items"]] == [new_memory["id"]]
-
-
-def test_memory_api_authenticates_before_validation_and_documents_v1_contract() -> None:
-    client = _client()
-
-    unauthenticated = client.post("/v1/memory-proposals", json={})
-    missing_idempotency = client.post(
-        "/v1/memory-proposals", headers={"authorization": "Bearer author"}, json={}
-    )
+    assert client.post("/v1/memories", json={}).status_code == 401
     openapi = client.get("/openapi.json").json()
-
-    assert unauthenticated.status_code == 401
-    assert missing_idempotency.status_code == 422
-    assert {
-        "/v1/memories/search",
-        "/v1/memory-proposals",
-        "/v1/memory-proposals/{proposal_id}/approve",
-        "/v1/memory-proposals/{proposal_id}/reject",
-        "/v1/memories/{memory_id}/expire",
-        "/v1/memory-proposals/{proposal_id}/audit",
-    }.issubset(openapi["paths"])
+    assert "/v1/memories" in openapi["paths"]
+    assert "/v1/memories/{memory_id}" in openapi["paths"]
+    assert not any("memory-proposals" in path for path in openapi["paths"])
 
 
-def test_partial_group_approver_cannot_govern_multi_group_memory() -> None:
-    client = _client()
-    proposed = client.post(
-        "/v1/memory-proposals",
-        headers={"authorization": "Bearer multi-author", "idempotency-key": "multi-proposal"},
-        json=_proposal_body(access_groups=["engineering", "security"]),
-    ).json()["proposal"]
-
-    denied_approval = client.post(
-        f"/v1/memory-proposals/{proposed['id']}/approve",
-        headers={
-            "authorization": "Bearer partial-approver",
-            "idempotency-key": "partial-approve",
-        },
-        json={"expected_revision": 1, "reason": "insufficient scope"},
-    )
-    approved = client.post(
-        f"/v1/memory-proposals/{proposed['id']}/approve",
-        headers={
-            "authorization": "Bearer multi-approver",
-            "idempotency-key": "multi-approve",
-        },
-        json={"expected_revision": 1, "reason": "full scope"},
-    ).json()["memory"]
-    denied_expiration = client.post(
-        f"/v1/memories/{approved['id']}/expire",
-        headers={
-            "authorization": "Bearer partial-approver",
-            "idempotency-key": "partial-expire",
-        },
-        json={"expected_revision": approved["revision"], "reason": "insufficient scope"},
-    )
-
-    assert denied_approval.status_code == 404
-    assert denied_approval.json()["error"]["code"] == "memory_proposal_not_found"
-    assert denied_expiration.status_code == 404
-    assert denied_expiration.json()["error"]["code"] == "memory_not_found"
-
-
-def test_memory_proposal_rejects_offset_naive_expiration() -> None:
+def test_memory_create_rejects_offset_naive_expiration() -> None:
     client = _client()
     response = client.post(
-        "/v1/memory-proposals",
-        headers={"authorization": "Bearer author", "idempotency-key": "naive-expiry"},
-        json=_proposal_body(expires_at="2027-01-01T00:00:00"),
+        "/v1/memories",
+        headers={"authorization": "Bearer developer", "idempotency-key": "naive"},
+        json=_memory_body(expires_at="2027-01-01T00:00:00"),
     )
-
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "validation_failed"
     with pytest.raises(ValidationError):
-        MemoryProposalCreateRequest.model_validate(_proposal_body(expires_at="2027-01-01T00:00:00"))
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {
-            "provenance": {
-                "repository": "org/incidents",
-                "path": "p" * 2_001,
-                "revision": "abc123",
-            }
-        },
-        {
-            "evidence": [
-                {"repository": "org/service", "path": "test.py", "revision": f"r-{index}"}
-                for index in range(21)
-            ]
-        },
-    ],
-)
-def test_memory_proposal_bounds_citations_before_persistence(changes: dict[str, object]) -> None:
-    client = _client()
-    response = client.post(
-        "/v1/memory-proposals",
-        headers={"authorization": "Bearer author", "idempotency-key": "bounded-citations"},
-        json=_proposal_body(**changes),
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "validation_failed"
+        SharedMemoryCreateRequest.model_validate(_memory_body(expires_at="2027-01-01T00:00:00"))

@@ -13,13 +13,13 @@ from team_agent_contracts import (
     KnowledgeSearchResponse,
     MemoryAuditListRequest,
     MemoryAuditResponse,
-    MemoryDecisionRequest,
-    MemoryDecisionResponse,
+    MemoryExpireRequest,
     MemoryMutationResponse,
-    MemoryProposalCreateRequest,
-    MemoryProposalResponse,
     MemorySearchRequest,
     MemorySearchResponse,
+    SharedMemoryCreateRequest,
+    SharedMemoryResponse,
+    SharedMemoryUpdateRequest,
     SkillGetRequest,
     SkillGetResponse,
     SkillListRequest,
@@ -49,9 +49,6 @@ _ERROR_MESSAGES = {
     ),
     "memory_conflict": "The memory changed or the idempotency key conflicts; refresh and retry.",
     "memory_not_found": "The memory was not found or is outside the caller's authorized scope.",
-    "memory_proposal_not_found": (
-        "The memory proposal was not found or is outside the caller's authorized scope."
-    ),
     "service_unavailable": "The context service is unavailable; retry later.",
 }
 _SKILL_NAME = re.compile(SKILL_NAME_PATTERN)
@@ -204,30 +201,28 @@ class ContextClient:
             json_body=request.model_dump(mode="json", exclude_none=True),
         )
 
-    async def propose_memory(
-        self, request: MemoryProposalCreateRequest, *, idempotency_key: str
-    ) -> MemoryProposalResponse:
+    async def create_memory(
+        self, request: SharedMemoryCreateRequest, *, idempotency_key: str
+    ) -> SharedMemoryResponse:
         return await self._request(
-            MemoryProposalResponse,
+            SharedMemoryResponse,
             "POST",
-            "/v1/memory-proposals",
+            "/v1/memories",
             json_body=request.model_dump(mode="json", exclude_none=True),
             headers={"idempotency-key": idempotency_key},
         )
 
-    async def decide_memory(
+    async def update_memory(
         self,
-        proposal_id: str,
-        request: MemoryDecisionRequest,
+        memory_id: str,
+        request: SharedMemoryUpdateRequest,
         *,
         idempotency_key: str,
-        approve: bool,
-    ) -> MemoryDecisionResponse:
-        action = "approve" if approve else "reject"
+    ) -> SharedMemoryResponse:
         return await self._request(
-            MemoryDecisionResponse,
-            "POST",
-            f"/v1/memory-proposals/{proposal_id}/{action}",
+            SharedMemoryResponse,
+            "PUT",
+            f"/v1/memories/{memory_id}",
             json_body=request.model_dump(mode="json"),
             headers={"idempotency-key": idempotency_key},
         )
@@ -235,7 +230,7 @@ class ContextClient:
     async def expire_memory(
         self,
         memory_id: str,
-        request: MemoryDecisionRequest,
+        request: MemoryExpireRequest,
         *,
         idempotency_key: str,
     ) -> MemoryMutationResponse:
@@ -249,23 +244,23 @@ class ContextClient:
 
     async def list_memory_audit(
         self,
-        proposal_id: str,
+        memory_id: str,
         project: str,
         *,
         limit: int = 50,
         cursor: str | None = None,
     ) -> MemoryAuditResponse:
         request = MemoryAuditListRequest(
-            proposal_id=proposal_id, project=project, limit=limit, cursor=cursor
+            memory_id=memory_id, project=project, limit=limit, cursor=cursor
         )
         params = {
             key: str(value)
-            for key, value in request.model_dump(exclude={"proposal_id"}, exclude_none=True).items()
+            for key, value in request.model_dump(exclude={"memory_id"}, exclude_none=True).items()
         }
         return await self._request(
             MemoryAuditResponse,
             "GET",
-            f"/v1/memory-proposals/{proposal_id}/audit",
+            f"/v1/memories/{memory_id}/audit",
             params=params,
         )
 

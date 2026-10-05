@@ -1,5 +1,8 @@
 # S02 Summary — Persistent Context Boundary
 
+> Historical delivery evidence. Mongo persistence remains relevant, but the active correction makes
+> its knowledge data an explicitly rebuildable projection of canonical Git.
+
 ## Delivered
 
 - Added the official PyMongo async driver and a dedicated Python database package behind the

@@ -1,5 +1,8 @@
 # S04 Summary — Immutable Skill Resolution and Package API
 
+> Historical delivery evidence. Package integrity remains applicable, while its per-artifact scope
+> assumptions are superseded by project/domain admission.
+
 ## Delivered
 
 - Added versioned snake_case contracts for skill resolution manifests, immutable package manifests,

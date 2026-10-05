@@ -7,7 +7,6 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 from team_agent_contracts import (
-    Authority,
     Citation,
     ImmutableSkillPackageManifest,
     SkillFileManifest,
@@ -23,10 +22,9 @@ def _to_camel(value: str) -> str:
 
 
 class ProjectManifest(BaseModel):
-    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
+    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True, extra="forbid")
 
     id: str = Field(min_length=1)
-    access_groups: list[str]
 
 
 class KnowledgeManifest(BaseModel):
@@ -52,12 +50,10 @@ class ExtensionManifest(BaseModel):
 
 
 class KnowledgeMetadata(BaseModel):
-    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
+    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True, extra="forbid")
 
     title: str
     project: str
-    access_groups: list[str]
-    authority: Authority
 
 
 class SkillMetadata(BaseModel):
@@ -67,7 +63,6 @@ class SkillMetadata(BaseModel):
     description: str = Field(min_length=1)
     version: str = Field(min_length=1)
     projects: list[str] = Field(min_length=1)
-    access_groups: list[str] = Field(min_length=1)
     allowed_tools: list[str] = Field(default_factory=list)
     resources: list[str] = Field(default_factory=list)
 
@@ -233,8 +228,6 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
                 KnowledgeChunk(
                     id=f"{manifest.id}:{relative_path}",
                     project=knowledge_metadata.project,
-                    access_groups=knowledge_metadata.access_groups,
-                    authority=knowledge_metadata.authority,
                     title=knowledge_metadata.title,
                     body=body,
                     citation=Citation(
@@ -251,7 +244,7 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
     )
     skills: list[SkillPackage] = []
     skill_names: set[str] = set()
-    manifest_projects = {project.id: set(project.access_groups) for project in manifest.projects}
+    manifest_projects = {project.id for project in manifest.projects}
     for configured_root in configured_skill_roots:
         skill_root = _safe_child(resolved_root, configured_root)
         for path in sorted(skill_root.rglob("SKILL.md")):
@@ -269,12 +262,6 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
                 if project not in manifest_projects:
                     raise ValueError(
                         f"Skill {skill_metadata.name} references undeclared project: {project}"
-                    )
-                undeclared_groups = set(skill_metadata.access_groups) - manifest_projects[project]
-                if undeclared_groups:
-                    raise ValueError(
-                        f"Skill {skill_metadata.name} references undeclared access groups for "
-                        f"project {project}: {sorted(undeclared_groups)}"
                     )
             if skill_metadata.name in skill_names:
                 raise ValueError(f"Duplicate skill name: {skill_metadata.name}")
@@ -295,7 +282,6 @@ def load_content_pack(root: Path, revision: str) -> ContentPack:
                     description=skill_metadata.description,
                     version=skill_metadata.version,
                     projects=skill_metadata.projects,
-                    access_groups=skill_metadata.access_groups,
                     allowed_tools=skill_metadata.allowed_tools,
                     body=body,
                     citation=Citation(

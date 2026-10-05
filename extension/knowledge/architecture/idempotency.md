@@ -1,8 +1,6 @@
 ---
 title: Stable event identity
 project: event-ingestion
-accessGroups: [engineering]
-authority: approved
 ---
 # Stable event identity
 

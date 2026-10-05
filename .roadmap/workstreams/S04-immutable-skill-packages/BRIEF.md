@@ -1,5 +1,8 @@
 # S04 — Immutable Skill Resolution and Package API
 
+> Historical slice brief. Package integrity remains valid; project/domain admission now grants the
+> complete domain catalog rather than a per-skill authorized subset.
+
 Depends on S03. Extend the Git/filesystem catalog to validate complete self-contained skill
 packages, referenced resources, safe relative paths, bounded files, and hashes. Add
 provider-neutral versioned resolution/lock contracts plus authenticated `POST /v1/skills:resolve`

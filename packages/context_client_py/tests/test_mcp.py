@@ -42,7 +42,6 @@ def _transport() -> httpx.MockTransport:
                     "description": "Diagnose a repository failure.",
                     "version": "1",
                     "projects": ["platform"],
-                    "access_groups": ["engineering"],
                     "allowed_tools": ["search_team_knowledge"],
                     "citation": {
                         "repository": "org/context",
@@ -58,14 +57,13 @@ def _transport() -> httpx.MockTransport:
                 200,
                 json={"items": [], "next_cursor": "memory-next", "request_id": "memory-search"},
             )
-        if request.url.path == "/v1/memory-proposals":
+        if request.url.path == "/v1/memories":
             body = request.read()
             assert body
-            proposal = {
+            memory = {
                 "schema_version": "1",
-                "id": "proposal-1",
+                "id": "memory-1",
                 "project": "platform",
-                "access_groups": ["engineering"],
                 "title": "Stable retry key",
                 "body": "Use the delivery identifier.",
                 "provenance": {
@@ -81,13 +79,14 @@ def _transport() -> httpx.MockTransport:
                     }
                 ],
                 "author_id": "agent",
-                "status": "proposed",
+                "last_modified_by": "agent",
+                "canonicality": "supplemental",
                 "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
                 "created_at": datetime.now(UTC).isoformat(),
                 "updated_at": datetime.now(UTC).isoformat(),
                 "revision": 1,
             }
-            return httpx.Response(201, json={"proposal": proposal, "request_id": "memory-propose"})
+            return httpx.Response(201, json={"memory": memory, "request_id": "memory-create"})
         raise AssertionError(request.url.path)
 
     return httpx.MockTransport(handler)
@@ -114,7 +113,7 @@ def test_mcp_registers_three_model_oriented_tools_with_opaque_pagination() -> No
         "list_team_skills",
         "get_team_skill",
         "search_team_memory",
-        "propose_team_memory",
+        "create_team_memory",
     ]
     assert result == {
         "items": [],
@@ -137,7 +136,6 @@ def test_mcp_get_skill_preserves_snake_case_rest_shape() -> None:
 
     result = asyncio.run(exercise())
 
-    assert result["access_groups"] == ["engineering"]
     assert result["allowed_tools"] == ["search_team_knowledge"]
     assert result["citation"] == {
         "repository": "org/context",
@@ -147,7 +145,7 @@ def test_mcp_get_skill_preserves_snake_case_rest_shape() -> None:
     }
 
 
-def test_mcp_memory_tools_search_and_only_propose_without_promotion_tools() -> None:
+def test_mcp_memory_tools_search_and_create_without_governance_tools() -> None:
     async def exercise() -> tuple[dict[str, object], list[str]]:
         async with (
             ContextClient("https://context.example", "secret", transport=_transport()) as gateway,
@@ -166,21 +164,20 @@ def test_mcp_memory_tools_search_and_only_propose_without_promotion_tools() -> N
         "next_cursor": "memory-next",
         "request_id": "memory-search",
     }
-    assert "propose_team_memory" in names
+    assert "create_team_memory" in names
     assert all(action not in names for action in ("approve_team_memory", "reject_team_memory"))
 
 
-def test_mcp_memory_proposal_rejects_offset_naive_expiration_before_rest() -> None:
+def test_mcp_memory_create_rejects_offset_naive_expiration_before_rest() -> None:
     async def exercise() -> bool:
         async with (
             ContextClient("https://context.example", "secret", transport=_transport()) as gateway,
             Client(build_mcp_server(gateway)) as client,
         ):
             result = await client.call_tool(
-                "propose_team_memory",
+                "create_team_memory",
                 {
                     "project": "platform",
-                    "access_groups": ["engineering"],
                     "title": "Stable retry key",
                     "body": "Use the delivery identifier.",
                     "provenance": {
@@ -253,7 +250,7 @@ def test_mcp_stdio_entrypoint_negotiates_and_lists_tools() -> None:
         "list_team_skills",
         "get_team_skill",
         "search_team_memory",
-        "propose_team_memory",
+        "create_team_memory",
     ]
 
 
@@ -311,7 +308,7 @@ def test_context_mcp_eval_set_has_ten_multi_call_questions() -> None:
                 "list_team_skills",
                 "get_team_skill",
                 "search_team_memory",
-                "propose_team_memory",
+                "create_team_memory",
             )
         )
         assert calls >= 2

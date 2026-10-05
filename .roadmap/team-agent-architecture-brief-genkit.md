@@ -7,6 +7,11 @@ Audience: Codex and the engineering team
 The implementation requirements in `skills-distribution-addendum.md` are normative where they
 replace this brief's earlier skill-catalog or distribution design.
 
+The architectural dogma in `docs/domain-knowledge-authority.md` is normative across every slice.
+This deployment serves one small, trusted team and domain. Admission to that project/domain is the
+content boundary; admitted developers can use and contribute the complete domain knowledge, skills,
+and shared working memory. Do not introduce per-artifact groups or field-level content policy.
+
 ## 1. Goal and architectural decisions
 
 Build a deployment-neutral, Docker-packaged team agent that supports Slack threads, a CLI, event and scheduled automations, and bounded multi-agent workflows. Use Genkit Python for hosted reasoning and coordination. Preserve a provider-neutral extension kit that local Codex and Claude Code can use independently of Genkit.
@@ -24,8 +29,12 @@ Decisions:
 - MongoDB cluster is the only required durable database. Use separate `agent_runtime` and `team_context` databases and credentials.
 - REST is the primary context-service interface; MCP and CLI adapt the same application services.
 - Git owns canonical knowledge, conventions, and skills. The context service builds skill discovery
-  metadata in memory and distributes immutable packages through authenticated APIs. MongoDB owns
-  knowledge indexes, runtime records, and dynamic memory, not the skill catalog.
+  metadata in memory and distributes immutable packages through authenticated APIs. A protected,
+  pinned Git revision becomes canonical only through normal branch/commit/PR/team review. MongoDB
+  owns rebuildable knowledge indexes, runtime records, and supplemental shared working memory, not
+  the skill catalog or canonical content.
+- One deployment maps to one trusted team/domain. Project/domain admission grants use of the whole
+  content corpus; record-level access groups and a content-approver role are outside this design.
 - Codex is the initial coding harness. Claude Code is a later adapter behind the same contract.
 - Produce three images from documented Dockerfile targets: `company/team-agent`, `company/team-context`, and `company/coding-runner`.
 - Provide Dockerfiles and development Compose only. Do not add Kubernetes, ECS, Nomad, or production hosting manifests.
@@ -36,7 +45,7 @@ Decisions:
 | Component | Owns | Must not own |
 |---|---|---|
 | Team agent | Slack ingress, identities, conversations, Genkit execution, workflow routing, automation definitions and runs | Raw shared-context database access, repository shell execution |
-| Team context service | Authorized retrieval, ingestion, skills catalog, shared memory, internal tools, audit | Slack thread state, arbitrary orchestration |
+| Team context service | Domain-admitted retrieval, ingestion, skills catalog, shared working memory, internal tools, audit | Canonical content approval, Slack thread state, arbitrary orchestration |
 | Coding runner | Pinned checkout, harness invocation, tests, diff/result validation | Long-lived conversation authority, production access |
 | Runner supervisor | Credentials, sandbox policy, independent checks, permitted branch/PR publication | Trusting the model's success assertion as verification |
 | Job executor | Launch, status, cancel, cleanup | Agent reasoning |
@@ -77,7 +86,7 @@ team-agent/
     automations/            # matching, schedules, leases, cursors
     context_client/         # authenticated REST client
     database/               # MongoDB repositories, validators, indexes
-    git_providers/          # mock first; GitHub/GitLab adapters later
+    git_providers/          # provider-neutral contract; GitHub/GitLab adapters later
     observability/
   extension/
     skills/
@@ -139,11 +148,13 @@ Expose these logical tools:
 
 - `search_team_knowledge`, `get_team_document`
 - `list_team_skills`, `get_team_skill`
-- `search_team_memory`, `propose_team_memory`
+- `search_team_memory`, `create_team_memory`
 - `get_incident`, `get_repository_metadata`
 - `start_coding_job`, `get_coding_job`, `cancel_coding_job`
 
-Bind caller identity and allowed scope in trusted application code. A model cannot grant itself permissions through arguments. Validate arguments and enforce authorization in the destination service as well.
+Bind caller identity and project/domain admission in trusted application code. A model cannot grant
+itself admission or external-action permissions through arguments. Validate arguments and enforce
+authorization in the destination service as well.
 
 A Genkit coding specialist can wrap `start_coding_job`, but actual editing and command execution use the Codex/Claude harness in the runner. Do not implement a second homemade repository tool loop in Genkit.
 
@@ -175,32 +186,37 @@ Provider contract tests cover multi-step tools, structured output with tools, st
 ### Skills and context
 
 Canonical skills remain Git-owned and provider neutral. The context service scans validated packages
-from one pinned checkout into an in-memory discovery catalog; MongoDB is not required for skill
-discovery or download. Each package includes trigger metadata, prerequisites, procedure, constraints,
-evidence requirements, completion criteria, and a complete resource inventory. V1 skill packages are
-self-contained and do not declare skill-to-skill dependencies.
+from one protected, pinned checkout into an in-memory discovery catalog; MongoDB is not required for
+skill discovery or download. Every developer admitted to the deployment's project/domain can use and
+contribute the complete domain catalog. Each package includes trigger metadata, prerequisites,
+procedure, constraints, evidence requirements, completion criteria, and a complete resource
+inventory. V1 skill packages are self-contained and do not declare skill-to-skill dependencies.
 
-The shared Python `SkillClient` resolves caller authorization and named/all selections to a versioned
+The shared Python `SkillClient` resolves domain admission and named/all selections to a versioned
 manifest pinned to one immutable catalog revision. The `SkillInstaller` validates safe paths and
 hashes, writes a snake_case lock and ownership manifest, and atomically creates a bounded per-run
-projection. The service exposes only the current approved catalog revision; runners stage verified
+projection. The service exposes only the current canonical catalog revision; runners stage verified
 packages during bootstrap for the job lifetime, and old frozen locks require a verified cache or
 fail without fallback. Genkit points `genkit_middleware.Skills` only at that projection. Never point
 middleware at the complete extension tree or let `use_skill` bypass context-service authorization.
 If middleware cannot preserve these invariants, retain the same resolved-lock contract and render
-selected skills into trusted task instructions instead.
+selected skills into trusted task instructions instead. Repository review—not a context-service
+operation—is what makes a skill change canonical.
 
 Project development also uses the checked-in `developing-genkit-python` agent skill installed from
 `genkit-ai/skills`. That skill guides contributors writing Genkit code; it is not part of the hosted
 runtime's team-skill catalog and grants no application capability.
 
-Advertise relevant authorized metadata first; load full skill bodies/resources on demand and record
-the resolved lock on each run. The `team-agent skills pull` interface installs named, authorized-all,
+Advertise relevant domain metadata first; load full skill bodies/resources on demand and record
+the resolved lock on each run. The `team-agent skills pull` interface installs named, domain-all,
 or frozen-lock selections without executing downloaded scripts. Use project-scoped generic, Codex,
 and Claude adapters; required runner installation completes before harness launch. Script execution,
 when explicitly authorized later, happens only in coding containers and never during installation.
 
-Add a compact authorized baseline to each turn: scope, essential conventions, and selected approved memories. Retrieve additional knowledge through tools, preserving citations and distinguishing source content from trusted instructions. Cap context size.
+Add a compact domain baseline to each turn: scope, essential conventions, and selected shared
+working memory clearly labeled supplemental. Retrieve additional knowledge through tools, preserving
+citations and distinguishing canonical Git content, supplemental memory, and trusted application
+instructions. Canonical Git content wins any conflict. Cap context size.
 
 ## 5. Sessions, history, and shared memory
 
@@ -218,9 +234,14 @@ Keep three concepts separate:
 
 1. Conversation history and Genkit state: `agent_runtime`.
 2. Workflow and external action progress: `agent_runtime`.
-3. Shared team memory: `team_context`, accessed through the context service.
+3. Shared team working memory: `team_context`, accessed through the context service.
 
-Shared memories have scope, provenance, evidence, author, timestamps, authority, expiration, and supersession. New memories start as proposals; authorized application operations approve them. Model confidence never automatically promotes a proposal.
+Shared working memory has project/domain scope, provenance, evidence, author, timestamps, revision,
+expiration, and supersession. It is immediately available to every admitted developer and remains
+supplemental and non-canonical throughout its lifecycle. Every admitted developer can create,
+search, revise, supersede, and expire it; there is no per-memory audience or approver role. A useful
+record becomes canonical only by becoming a reviewed Git change. Model confidence and application
+operations cannot promote it.
 
 ## 6. Portable extension kit and RAG
 
@@ -236,18 +257,33 @@ GET  /v1/skills/{name}
 POST /v1/skills:resolve
 GET  /v1/skill-packages/{package_id}
 POST /v1/memories/search
-POST /v1/memory-proposals
-POST /v1/memory-proposals/{id}/approve
+POST /v1/memories
+PUT  /v1/memories/{id}
+POST /v1/memories/{id}/expire
+GET  /v1/memories/{id}/audit
 POST /v1/tools/{tool-name}:invoke
 GET  /health
 GET  /ready
 ```
 
-MCP exposes the same narrow operations. The hosted runtime uses scoped REST-backed function tools initially; a verified Python MCP client integration may be added later without duplicating business logic. Do not assume Genkit's developer MCP server is the runtime context server.
+MCP exposes search plus additive shared-memory creation; it does not expose update, expiry, audit, or
+publication operations. The hosted runtime uses scoped REST-backed function tools initially; a
+verified Python MCP client integration may be added later without duplicating business logic. Do
+not assume Genkit's developer MCP server is the runtime context server.
 
-Ingestion reads approved sources at pinned Git revisions, normalizes and chunks them, attaches authorization and provenance, generates embeddings, and records revision/index status. Retrieval applies access filters before returning content, combines lexical and vector results, optionally reranks, prefers approved/current sources, and returns citations. Use MongoDB Search and Vector Search where supported. Preserve a `KnowledgeService` interface if the cluster requires another search implementation.
+Ingestion reads canonical sources at one exact protected Git revision, normalizes and chunks them,
+attaches project/domain provenance, generates embeddings, and stages a complete revision-scoped
+projection. Publication verifies the candidate and atomically advances an active-revision pointer;
+retrieval never mixes revisions. Retrieval verifies project/domain admission before returning
+content, combines lexical and vector results, optionally reranks, and returns citations. Implement
+the platform-neutral CI and reconciliation contract in `docs/required-ci-implementations.md`. Use
+MongoDB Search and Vector Search where supported. Preserve a `KnowledgeService` interface if the
+cluster requires another search implementation.
 
-Each returned chunk includes source ID, repository/path, revision, authority, owner, project/access groups, update timestamp, and citation reference. Treat repository content and retrieved documents as untrusted input rather than tool authorization.
+Each returned chunk includes source ID, repository/path, exact commit revision, owner, project/domain,
+projection build metadata, update timestamp, and citation reference. MongoDB chunks are rebuildable
+representations, not an independent authority. Treat repository content and retrieved documents as
+untrusted input rather than tool authorization.
 
 ## 7. Durable run and action execution
 
@@ -286,7 +322,8 @@ Invoke fixed workflow branches through application code; use bounded asyncio con
 3. Coding harness diagnoses, edits, and tests in the disposable workspace.
 4. Supervisor independently validates the diff and mandatory checks.
 5. Where authorized, publish a draft PR and return evidence to the Slack thread.
-6. Submit useful lessons as memory proposals.
+6. Record useful lessons as supplemental working memory and, when durable value warrants it,
+   prepare a Git change for normal team review.
 
 ### Parallel merge-request review
 
@@ -352,7 +389,10 @@ submission idempotency key, repository, base/head revisions, objective, mode (`i
 and supervisor-owned capability policy. Policies include allowed repositories/paths/commands,
 may-edit/publish flags, timeout, diff limits, and resource limits.
 
-Results include terminal status, diagnosis, evidence, findings, patch reference, changed files, harness-reported checks, independent verification, exact reviewed SHA, publication outcome, usage, and memory proposals. Findings include severity, path/line reference, explanation, evidence, and suggested action.
+Results include terminal status, diagnosis, evidence, findings, patch reference, changed files,
+harness-reported checks, independent verification, exact reviewed SHA, publication outcome, usage,
+and supplemental working-memory suggestions. Findings include severity, path/line reference,
+explanation, evidence, and suggested action.
 
 Terminal job states: `completed`, `failed`, `timed_out`, `cancelled`, `needs_input`, `awaiting_approval`, `no_fix_found`, `unsafe_to_proceed`.
 
@@ -389,7 +429,8 @@ Emoji is a projection, not the authority. Internal review records establish comp
 
 `agent_runtime`: identities, slack_threads, sessions, session_snapshots, snapshot_chunks, session_pointers, session_events, runs, workflow_steps, coding_jobs, completion_outbox, action_intents, approvals, event_receipts, automations, automation_runs, code_reviews, review_projections.
 
-`team_context`: documents, document_chunks, source_revisions, memories, memory_proposals, audit_events.
+`team_context`: documents, document_chunks, source_revisions, active_source_revisions, memories,
+memory_idempotency, audit_events.
 
 Skill packages and discovery metadata are rebuildable from Git and are not MongoDB collections.
 Runtime and automation records retain only the selected identities, immutable revisions, and hashes
@@ -403,7 +444,11 @@ Avoid embedding unbounded events, logs, or findings in one document. Keep large 
 
 ## 12. Authorization and operational controls
 
-Authenticate humans and services, map Slack identities to company scope, and filter knowledge before retrieval returns. Enforce tools and workflows outside prompts. Approvals are bound to run/action, repository, revision, capabilities, and expiration; changes invalidate incompatible approvals.
+Authenticate humans and services, map identities to project/domain admission, and reject content
+retrieval before results are materialized when admission is absent. Admitted developers share the
+complete domain corpus. Enforce tools and workflows outside prompts. External-action approvals are
+bound to run/action, repository, revision, capabilities, and expiration; changes invalidate
+incompatible approvals. These approvals do not govern knowledge or working-memory contribution.
 
 Explicit requests to create a PR authorize a draft PR within the allowed scope. Automation creation records the permitted action classes. Merge, deploy, production mutation, and data migration require separate authority and are disabled in the initial release.
 
@@ -438,12 +483,13 @@ documented; mocks allow application work to proceed without claiming live compat
 Create the Python workspace, contracts, mock clients, MongoDB knowledge repositories/indexes,
 context REST service, development Compose, image targets, and fixture knowledge/skills. Implement
 authenticated cited retrieval, the Git-backed in-memory skill catalog, immutable package resolution,
-verified pull/lock installation, memory proposals, MCP/context CLI, and project-scoped local-agent
+verified pull/lock installation, shared working memory, MCP/context CLI, and project-scoped local-agent
 adapters.
 
-Exit: all image targets build; authorized REST/MCP/CLI retrieval agrees; targeted/all/frozen pulls
-are atomic and reproducible; Codex/Claude project layouts pass discovery fixtures; denied scope never
-returns chunks or packages; knowledge revisions, skill locks, and memory provenance are preserved.
+Exit: all image targets build; REST/MCP/CLI retrieval agrees; targeted/all/frozen pulls are atomic
+and reproducible; Codex/Claude project layouts pass discovery fixtures; non-admitted callers receive
+no domain content; every admitted developer can use the complete knowledge/skills/memory corpus;
+knowledge revisions, skill locks, and working-memory provenance are preserved.
 
 ### Phase 2 — Genkit coordinator and conversations
 
@@ -475,13 +521,19 @@ Exit: duplicate/conflicting findings are reconciled with evidence; stale heads a
 
 ### Phase 6 — Real integrations and hardening
 
-Implement configured Git provider publication, second harness, approval UX, credential rotation, injection/failure evals, and operational recovery docs. Keep deployment neutral.
+Implement configured Git provider publication, second harness, external-action approval UX,
+credential rotation, injection/failure evals, operational recovery docs, and the S24 team/domain CI
+adoption guide. Keep deployment neutral and keep the CI publication contract platform agnostic.
 
 Exit: end-to-end fixture and failure suites pass; real publication uses supervisor credentials only; no merge/deploy/production capability is exposed; local extension remains usable without Genkit.
 
 ## 15. Required verification
 
-Use meaningful unit/integration tests for authorization, MongoDB session semantics, fencing, event and occurrence deduplication, action reconciliation, skill selection, memory promotion, stale-head review, partial reviewer failure, cancellation, diff rejection, credential separation, and provider translation. Include prompt-injection fixtures in retrieved knowledge and repository files.
+Use meaningful unit/integration tests for domain admission, complete-corpus visibility, Git-over-memory
+precedence, working-memory lifecycle, MongoDB session semantics, fencing, event and occurrence
+deduplication, action reconciliation, skill selection, stale-head review, partial reviewer failure,
+cancellation, diff rejection, credential separation, and provider translation. Include
+prompt-injection fixtures in retrieved knowledge and repository files.
 
 Workflow evals assess grounded answers, valid evidence, useful diagnosis, unsupported findings, and skill relevance. Each initial skill has positive and negative trigger cases. Do not treat two agreeing model reviewers as proof of correctness; require evidence and independent executable checks where applicable.
 

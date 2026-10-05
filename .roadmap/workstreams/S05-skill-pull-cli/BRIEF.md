@@ -1,5 +1,8 @@
 # S05 — Verified Skill Pull and Lockfile CLI
 
+> Historical slice brief. Selection and frozen-lock behavior remain valid; admission to the
+> project/domain, not record-level policy, controls access to the domain catalog.
+
 Depends on S04. Add the shared Python `SkillClient` and `SkillInstaller`, versioned
 `skills.lock.json`, verified local cache, ownership manifest, and `team-agent skills list/pull`
 commands. Support exactly one of names, `--all`, or `--lock`, plus project, destination, revision,

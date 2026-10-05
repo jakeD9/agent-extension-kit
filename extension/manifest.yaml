@@ -5,7 +5,6 @@ kitCompatibility: ">=0.1.0"
 repository: agent-extension-kit-sample
 projects:
   - id: event-ingestion
-    accessGroups: [engineering]
 knowledge:
   roots: [knowledge]
 skills:

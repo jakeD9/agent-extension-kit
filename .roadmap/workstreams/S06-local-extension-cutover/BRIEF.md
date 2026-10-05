@@ -1,5 +1,8 @@
 # S06 — Local MCP and Harness Parity
 
+> Historical slice brief. Transport parity must be reverified after the domain-admission correction
+> removes per-artifact knowledge and skill groups.
+
 Depends on S05. Add the remaining JSON-first context CLI and stdio MCP adapter over shared
 application contracts. Add project-scoped Codex and Claude installers that preserve package
 provenance and prove their pinned harness discovery layouts; neither writes global user directories.

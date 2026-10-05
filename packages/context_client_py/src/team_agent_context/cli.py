@@ -8,7 +8,11 @@ from typing import Never, TextIO
 
 import httpx
 from pydantic import BaseModel, ValidationError
-from team_agent_contracts import MemoryDecisionRequest, MemoryProposalCreateRequest
+from team_agent_contracts import (
+    MemoryExpireRequest,
+    SharedMemoryCreateRequest,
+    SharedMemoryUpdateRequest,
+)
 
 from team_agent_context.client import ContextClient, ContextClientError
 
@@ -30,12 +34,12 @@ def _parser() -> _JsonArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    search = commands.add_parser("search", help="Search approved team knowledge")
+    search = commands.add_parser("search", help="Search canonical Git team knowledge")
     search.add_argument("query")
     search.add_argument("--project", required=True)
     search.add_argument("--limit", type=int, default=8)
 
-    skill = commands.add_parser("skill", help="Discover approved team skills")
+    skill = commands.add_parser("skill", help="Discover canonical Git team skills")
     skill_commands = skill.add_subparsers(dest="skill_command", required=True)
     skill_list = skill_commands.add_parser("list", help="List authorized skill metadata")
     skill_list.add_argument("--project", required=True)
@@ -47,33 +51,31 @@ def _parser() -> _JsonArgumentParser:
     skill_get.add_argument("--project", required=True)
     skill_get.add_argument("--revision")
 
-    memory = commands.add_parser("memory", help="Search and govern shared team memory")
+    memory = commands.add_parser("memory", help="Search and contribute shared team memory")
     memory_commands = memory.add_subparsers(dest="memory_command", required=True)
-    memory_search = memory_commands.add_parser("search", help="Search authoritative team memory")
+    memory_search = memory_commands.add_parser("search", help="Search supplemental team memory")
     memory_search.add_argument("query")
     memory_search.add_argument("--project", required=True)
     memory_search.add_argument("--limit", type=int, default=20)
     memory_search.add_argument("--cursor")
 
-    memory_propose = memory_commands.add_parser("propose", help="Submit a sourced memory proposal")
-    memory_propose.add_argument("--proposal-json", required=True)
-    memory_propose.add_argument("--idempotency-key", required=True)
+    memory_create = memory_commands.add_parser("create", help="Create sourced supplemental memory")
+    memory_create.add_argument("--memory-json", required=True)
+    memory_create.add_argument("--idempotency-key", required=True)
 
-    for action in ("approve", "reject"):
-        decision = memory_commands.add_parser(action, help=f"{action.title()} a memory proposal")
-        decision.add_argument("proposal_id")
-        decision.add_argument("--expected-revision", type=int, required=True)
-        decision.add_argument("--reason", required=True)
-        decision.add_argument("--idempotency-key", required=True)
+    memory_update = memory_commands.add_parser("update", help="Update current supplemental memory")
+    memory_update.add_argument("memory_id")
+    memory_update.add_argument("--memory-json", required=True)
+    memory_update.add_argument("--idempotency-key", required=True)
 
-    memory_expire = memory_commands.add_parser("expire", help="Expire an approved memory")
+    memory_expire = memory_commands.add_parser("expire", help="Expire supplemental memory")
     memory_expire.add_argument("memory_id")
     memory_expire.add_argument("--expected-revision", type=int, required=True)
     memory_expire.add_argument("--reason", required=True)
     memory_expire.add_argument("--idempotency-key", required=True)
 
-    memory_audit = memory_commands.add_parser("audit", help="Inspect immutable proposal audit")
-    memory_audit.add_argument("proposal_id")
+    memory_audit = memory_commands.add_parser("audit", help="Inspect immutable memory audit")
+    memory_audit.add_argument("memory_id")
     memory_audit.add_argument("--project", required=True)
     memory_audit.add_argument("--limit", type=int, default=50)
     memory_audit.add_argument("--cursor")
@@ -91,28 +93,25 @@ async def _execute(args: argparse.Namespace, environment: Mapping[str, str]) -> 
                 return await client.search_memories(
                     args.query, args.project, limit=args.limit, cursor=args.cursor
                 )
-            if args.memory_command == "propose":
-                proposal = MemoryProposalCreateRequest.model_validate_json(args.proposal_json)
-                return await client.propose_memory(proposal, idempotency_key=args.idempotency_key)
-            if args.memory_command in {"approve", "reject"}:
-                decision = MemoryDecisionRequest(
-                    expected_revision=args.expected_revision, reason=args.reason
-                )
-                return await client.decide_memory(
-                    args.proposal_id,
-                    decision,
+            if args.memory_command == "create":
+                memory = SharedMemoryCreateRequest.model_validate_json(args.memory_json)
+                return await client.create_memory(memory, idempotency_key=args.idempotency_key)
+            if args.memory_command == "update":
+                update = SharedMemoryUpdateRequest.model_validate_json(args.memory_json)
+                return await client.update_memory(
+                    args.memory_id,
+                    update,
                     idempotency_key=args.idempotency_key,
-                    approve=args.memory_command == "approve",
                 )
             if args.memory_command == "expire":
-                decision = MemoryDecisionRequest(
+                decision = MemoryExpireRequest(
                     expected_revision=args.expected_revision, reason=args.reason
                 )
                 return await client.expire_memory(
                     args.memory_id, decision, idempotency_key=args.idempotency_key
                 )
             return await client.list_memory_audit(
-                args.proposal_id,
+                args.memory_id,
                 args.project,
                 limit=args.limit,
                 cursor=args.cursor,

@@ -1,5 +1,8 @@
 # S07 — Genkit Python and OpenAI Compatibility Gate
 
+> Historical compatibility brief. Its Genkit/provider evidence remains valid and does not establish
+> content authority or access policy.
+
 Depends on S06. Read `.agents/skills/developing-genkit-python/SKILL.md` and its routed references.
 Pin Python, Genkit, `genkit-openai`, Genkit CLI, middleware, FastAPI integration, and related versions.
 Build a small executable that uses an explicitly configured Codex-capable OpenAI API model ID and

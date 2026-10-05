@@ -1,5 +1,8 @@
 # S03 Summary — Authorized Skill-Catalog Tracer
 
+> Historical delivery evidence. Per-skill group filtering described below is superseded; admission
+> to one project/domain grants the complete domain catalog.
+
 ## Delivered
 
 - Ported extension skill parsing and manifest validation into the Python content-pack loader,

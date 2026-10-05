@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <evals server="team-context" transport="stdio" schema_version="1">
   <eval id="1" category="happy-path">
-    <question>Find the approved event-ingestion idempotency guidance, then discover and load the most relevant repair skill. Summarize the guidance with its citation.</question>
+    <question>Find the canonical event-ingestion idempotency guidance, then discover and load the most relevant repair skill. Summarize the guidance with its citation.</question>
     <expected>Call search_team_knowledge for event-ingestion, call list_team_skills, choose diagnose-and-fix from its metadata, then call get_team_skill and cite the returned repository, path, and revision.</expected>
   </eval>
   <eval id="2" category="happy-path">
-    <question>Determine whether the platform project has an approved skill for diagnosing a repository failure and explain its first required action.</question>
+    <question>Determine whether the platform domain catalog has a skill for diagnosing a repository failure and explain its first required action.</question>
     <expected>Call list_team_skills for platform, select a relevant visible skill, call get_team_skill with the exact returned name, and answer only from the loaded body.</expected>
   </eval>
   <eval id="3" category="happy-path">
-    <question>Research the team's stable identifier convention and check current approved memory for a later vendor-specific lesson.</question>
-    <expected>Call search_team_knowledge with a focused query, call search_team_memory for the same project, compare their citations/evidence, and distinguish Git guidance from governed operational memory.</expected>
+    <question>Research the team's stable identifier convention and check supplemental memory for a later vendor-specific lesson.</question>
+    <expected>Call search_team_knowledge with a focused query, call search_team_memory for the same project, compare their citations/evidence, identify Git as canonical and memory as supplemental, and prefer Git if they conflict.</expected>
   </eval>
   <eval id="4" category="error-recovery">
     <question>Load a skill called repair_bug for platform. If the request is invalid, recover and determine whether the intended kebab-case skill exists.</question>
@@ -21,20 +21,20 @@
     <expected>Call get_team_skill and handle its safe not-found/authorization error without inferring existence, call list_team_skills for the authorized project, load only a returned name, and explicitly state the scope limitation.</expected>
   </eval>
   <eval id="6" category="pagination">
-    <question>Inspect the complete authorized skill catalog with a page size of one, then load the best skill for repository diagnosis.</question>
+    <question>Inspect the complete admitted-domain skill catalog with a page size of one, then load the best skill for repository diagnosis.</question>
     <expected>Call list_team_skills with limit 1, repeat with each next_cursor unchanged until absent, compare the accumulated metadata, then call get_team_skill for the selected name.</expected>
   </eval>
   <eval id="7" category="partial-information">
-    <question>Decide whether approved knowledge and memory are sufficient to recommend an idempotency implementation. If the memory evidence is absent, state the gap.</question>
-    <expected>Call search_team_knowledge, assess citation relevance, call search_team_memory for current approved lessons, and answer with uncertainty rather than treating an absent proposal as authority.</expected>
+    <question>Decide whether canonical Git knowledge and supplemental memory are sufficient to recommend an idempotency implementation. If memory evidence is absent, state the gap.</question>
+    <expected>Call search_team_knowledge, assess citation relevance, call search_team_memory for supplemental lessons, follow Git on conflict, and answer with uncertainty rather than inventing missing evidence.</expected>
   </eval>
   <eval id="8" category="partial-information">
     <question>Compare the visible skill metadata with knowledge-search evidence and decide whether to load a full skill body for this architecture question.</question>
     <expected>Call list_team_skills and search_team_knowledge, decide from descriptions whether a skill is relevant, and call get_team_skill only when justified; explain the decision.</expected>
   </eval>
   <eval id="9" category="cross-tool-composition">
-    <question>After finding cited evidence for a new vendor retry lesson, submit it for team review without claiming it is already authoritative.</question>
-    <expected>Call search_team_knowledge and search_team_memory to check existing authority, then call propose_team_memory with explicit provenance, evidence, expiry, scope, and a stable idempotency key; report that approval remains separate.</expected>
+    <question>After finding cited evidence for a new vendor retry lesson, record it as supplemental team memory without claiming it is canonical.</question>
+    <expected>Call search_team_knowledge and search_team_memory to check existing context, then call create_team_memory with explicit provenance, evidence, expiry, project, and a stable idempotency key; report that only a reviewed Git change can make the lesson canonical.</expected>
   </eval>
   <eval id="10" category="cross-tool-composition">
     <question>Verify that a requested skill revision matches the knowledge revision used for a recommendation; if it is unavailable, stop rather than substitute another revision.</question>

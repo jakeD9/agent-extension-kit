@@ -1,5 +1,8 @@
 # S01 Summary — Python Cited-Search Tracer
 
+> Historical delivery evidence. The per-record group/authority policy described below is superseded
+> by project/domain admission through the completed S08 correction.
+
 ## Delivered
 
 - Established a locked uv workspace with separate distributions for contracts, authentication,

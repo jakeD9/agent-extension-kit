@@ -39,7 +39,8 @@
   persistence contracts must not import them.
 - The stock `genkit-openai` package is pinned for compatibility tracking but is not the selected
   Astra coordinator adapter. There is no model/provider fallback or silent model substitution.
-- The Skills middleware accepts only an installer-produced authorized generic projection, never the
-  full extension tree.
+- The Skills middleware accepts only an installer-produced selected generic projection from the
+  admitted project's complete catalog, never the full extension tree.
 - S07 adds no production coordinator, MongoDB session store, durable coding job, Slack behavior, or
-  coding-harness invocation. S08 owns governed memory, S09 the coordinator, and S10 durable chats.
+  coding-harness invocation. Corrected S08 owns supplemental shared working memory and Git-authority
+  enforcement, S09 the coordinator, and S10 durable chats.

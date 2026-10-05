@@ -1,5 +1,8 @@
 # S06 Summary — Local MCP and Harness Parity
 
+> Historical delivery evidence. Transport and layout work remains applicable, but parity must be
+> reverified after per-artifact content policy is removed.
+
 ## Delivered
 
 - Added the `team-agent-context` Python package with a bounded authenticated async client, a

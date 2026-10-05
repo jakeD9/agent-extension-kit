@@ -3,24 +3,25 @@
 Each slice is designed for one focused implementation session. A checkbox changes only after the
 slice's acceptance criteria have fresh verification evidence. The canonical Genkit architecture
 brief and the workstream artifacts under `.roadmap/workstreams/` supply fresh-session context.
+The domain-authority dogma and required CI publication contract are normative for all slices.
 
 - [x] **S01: Python cited-search tracer** `risk:high` `depends:[]`
   > After this: an authenticated REST request returns authorized, revision-pinned fixture knowledge from the Python service.
 - [x] **S02: Persistent context boundary** `risk:medium` `depends:[S01]`
   > After this: cited retrieval survives restart and the context service cannot access runtime collections.
-- [x] **S03: Authorized skill-catalog tracer** `risk:medium` `depends:[S02]`
-  > After this: authenticated REST callers can list and load only authorized skills scanned from the pinned Git content pack, without a MongoDB skill catalog.
+- [x] **S03: Project skill-catalog tracer** `risk:medium` `depends:[S02]`
+  > After the S08 correction: an admitted REST caller can list and load the complete project/domain skill catalog scanned from the pinned Git content pack, without a MongoDB skill catalog.
 - [x] **S04: Immutable skill resolution and package API** `risk:high` `depends:[S03]`
-  > After this: authorized callers can resolve named/all selections to a hashed immutable manifest and download exact self-contained packages from the current approved revision.
+  > After the S08 correction: admitted callers can resolve named/all selections to a hashed immutable manifest and download exact self-contained packages from the configured pinned Git revision.
 - [x] **S05: Verified skill pull and lockfile CLI** `risk:high` `depends:[S04]`
-  > After this: local users and automations can atomically install targeted, authorized packages and reproduce them from a frozen lock.
-- [ ] **S06: Local MCP and harness parity** `risk:medium` `depends:[S05]`
+  > After this: local users and automations can atomically install targeted project packages and reproduce them from a frozen lock.
+- [x] **S06: Local MCP and harness parity** `risk:medium` `depends:[S05]`
   > After this: Python REST, CLI, and MCP agree on context behavior, and Codex/Claude project layouts pass discovery fixtures.
-- [ ] **S07: Genkit Python and OpenAI compatibility gate** `risk:high` `depends:[S06]`
+- [x] **S07: Genkit Python and OpenAI compatibility gate** `risk:high` `depends:[S06]`
   > After this: a locked executable proves the supported Genkit agent-or-flow path, OpenAI model adapter, Skills middleware, tools, structured output, streaming, sessions, aborts, and FastAPI integration.
-- [ ] **S08: Governed team memory** `risk:medium` `depends:[S06]`
-  > After this: authorized callers can propose, approve, supersede, expire, and search sourced memories consistently through REST, CLI, and MCP.
-- [ ] **S09: Genkit coordinator tracer** `risk:high` `depends:[S06,S07]`
+- [x] **S08: Domain authority and shared working memory correction** `risk:high` `depends:[S06]`
+  > After this: project/domain admission exposes the complete corpus, Git remains sole canonical authority, and team-wide supplemental memory has a provenance-rich lifecycle without approvers or per-record groups.
+- [ ] **S09: Genkit coordinator tracer** `risk:high` `depends:[S06,S07,S08]`
   > After this: a provider-neutral runtime turn uses an authorized locked skill projection and scoped context tools to return structured cited output through the configured OpenAI model adapter.
 - [ ] **S10: Durable Genkit conversations** `risk:high` `depends:[S09]`
   > After this: multi-turn state survives restart, same-thread turns serialize, and stale workers cannot update a conversation.
@@ -50,6 +51,8 @@ brief and the workstream artifacts under `.roadmap/workstreams/` supply fresh-se
   > After this: the same frozen-lock supervised coding contract executes through Claude without coordinator or workflow changes.
 - [ ] **S23: Security, recovery, and assembled-system proof** `risk:high` `depends:[S18,S20,S21,S22]`
   > After this: all three images pass end-to-end fixture, security, injection, cancellation, restart, and side-effect reconciliation suites.
+- [ ] **S24: Domain adoption and CI publication guide** `risk:medium` `depends:[S23]`
+  > After this: a GitHub or GitLab team can map its domain into the generic exact-SHA Git-to-Mongo publication and reconciliation contract without provider-specific kit configuration.
 
 ## Global completion checks
 

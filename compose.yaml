@@ -83,7 +83,9 @@ services:
       HTTP_PORT: 3000
       CONTENT_PATH: /app/extension
       CONTENT_REVISION: ${CONTENT_REVISION:-local-example}
-      DEV_AUTH_PRINCIPALS: '${DEV_AUTH_PRINCIPALS:-{"dev-token":{"id":"local-developer","groups":["engineering"],"projects":["event-ingestion"],"roles":["approver"]}}}'
+      TEAM_AGENT_ALLOW_MUTABLE_CONTENT_REVISION: ${TEAM_AGENT_ALLOW_MUTABLE_CONTENT_REVISION:-true}
+      TEAM_AGENT_BOOTSTRAP_CONTENT_ON_STARTUP: ${TEAM_AGENT_BOOTSTRAP_CONTENT_ON_STARTUP:-true}
+      DEV_AUTH_PRINCIPALS: '${DEV_AUTH_PRINCIPALS:-{"dev-token":{"id":"local-developer","groups":["engineering"],"projects":["event-ingestion"],"roles":[]}}}'
       TEAM_CONTEXT_MONGODB_URI: mongodb://${TEAM_CONTEXT_MONGODB_USERNAME:-team_context_service}:${TEAM_CONTEXT_MONGODB_PASSWORD:-local-context-password}@mongo:27017/${TEAM_CONTEXT_MONGODB_DATABASE:-team_context}?authSource=${TEAM_CONTEXT_MONGODB_DATABASE:-team_context}&replicaSet=team-agent-rs
       TEAM_CONTEXT_MONGODB_DATABASE: ${TEAM_CONTEXT_MONGODB_DATABASE:-team_context}
       AGENT_RUNTIME_MONGODB_DATABASE: ${AGENT_RUNTIME_MONGODB_DATABASE:-agent_runtime}

@@ -1,8 +1,6 @@
 ---
 title: Event ingestion glossary
 project: event-ingestion
-accessGroups: [engineering]
-authority: approved
 ---
 # Event ingestion glossary
 

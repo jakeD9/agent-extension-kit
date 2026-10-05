@@ -1,8 +1,6 @@
 ---
 title: Duplicate events caused by unstable keys
 project: event-ingestion
-accessGroups: [engineering]
-authority: approved
 ---
 # Duplicate events caused by unstable keys
 

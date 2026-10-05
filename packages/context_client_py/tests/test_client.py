@@ -22,7 +22,7 @@ def test_search_returns_the_snake_case_rest_contract() -> None:
                         "title": "Stable identity",
                         "excerpt": "Use the vendor event ID.",
                         "score": 4.0,
-                        "authority": "approved",
+                        "canonicality": "canonical",
                         "citation": {
                             "repository": "org/context",
                             "path": "knowledge/idempotency.md",

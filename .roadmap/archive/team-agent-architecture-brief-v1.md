@@ -1,5 +1,9 @@
 # Team Agent Extension Architecture and Implementation Plan
 
+> **Superseded archive:** Retained only as planning history. Use the canonical Genkit brief and the
+> normative domain-authority dogma. This file's memory-promotion and per-artifact access-group model
+> must not be implemented.
+
 **Status:** Proposed implementation brief  
 **Audience:** Coding agent and engineering team  
 **Primary goal:** Build a provider-neutral team extension that gives hosted and local agents access to approved domain knowledge, reusable skills, persistent memory, and narrowly scoped tools.

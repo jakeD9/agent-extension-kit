@@ -4,13 +4,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from team_agent_contracts import (
-    Authority,
     Citation,
     ImmutableSkillPackageManifest,
     KnowledgeSearchRequest,
-    MemoryDecisionRequest,
-    MemoryProposalCreateRequest,
+    MemoryExpireRequest,
     Principal,
+    SharedMemoryCreateRequest,
+    SharedMemoryUpdateRequest,
     SkillFileManifest,
     SkillListRequest,
     SkillPackageBundle,
@@ -19,13 +19,14 @@ from team_agent_contracts import (
 )
 from team_context_core import (
     GitSkillCatalog,
-    InMemoryGovernedMemory,
     InMemoryKnowledgeIndex,
+    InMemorySharedMemory,
     InvalidSkillCursor,
     KnowledgeChunk,
     MemoryNotFoundError,
     SkillNotFoundError,
     SkillPackage,
+    SkillRevisionNotFoundError,
 )
 
 
@@ -33,7 +34,6 @@ def _packaged_skill(
     name: str,
     *,
     projects: list[str] | None = None,
-    groups: list[str] | None = None,
 ) -> SkillPackage:
     path = f"skills/{name}/SKILL.md"
     file = SkillFileManifest(path="SKILL.md", sha256="a" * 64, size=7)
@@ -61,7 +61,6 @@ def _packaged_skill(
         description=name,
         version="1",
         projects=projects or ["project"],
-        access_groups=groups or ["engineering"],
         allowed_tools=[],
         body="# Skill",
         citation=manifest.citation,
@@ -76,8 +75,6 @@ def chunks() -> list[KnowledgeChunk]:
         KnowledgeChunk(
             id="approved",
             project="event-ingestion",
-            access_groups=["engineering"],
-            authority=Authority.APPROVED,
             title="Stable idempotency keys",
             body="The idempotency key uses the vendor event identifier and never receipt time.",
             citation=Citation(
@@ -89,8 +86,6 @@ def chunks() -> list[KnowledgeChunk]:
         KnowledgeChunk(
             id="private",
             project="billing",
-            access_groups=["finance"],
-            authority=Authority.APPROVED,
             title="Billing secrets",
             body="Private billing material",
             citation=Citation(
@@ -138,7 +133,6 @@ def test_skill_catalog_uses_stable_cursor_pagination() -> None:
         description="A",
         version="1",
         projects=["project"],
-        access_groups=["engineering"],
         allowed_tools=[],
         body="# A",
         citation=Citation(repository="sample", path="skills/a/SKILL.md", revision="rev"),
@@ -209,14 +203,14 @@ def test_skill_resolution_returns_only_explicit_self_contained_packages() -> Non
     assert [package.name for package in resolved.packages] == ["review"]
 
 
-def test_skill_resolution_checks_authorization_before_revision_availability() -> None:
+def test_skill_resolution_ignores_user_groups_within_project() -> None:
     catalog = GitSkillCatalog(
-        [_packaged_skill("private", groups=["security"])],
+        [_packaged_skill("private")],
         "rev",
     )
     principal = Principal(id="dev", groups=["engineering"], projects=["project"])
 
-    with pytest.raises(SkillNotFoundError, match="Skill not found"):
+    with pytest.raises(SkillRevisionNotFoundError, match="revision is unavailable"):
         asyncio.run(
             catalog.resolve(
                 SkillResolveRequest(project="project", names=["private"], revision="unavailable"),
@@ -256,51 +250,58 @@ def test_skill_catalog_requires_nonempty_explicit_revision() -> None:
         GitSkillCatalog([], "")
 
 
-def test_memory_mutations_require_every_protected_group() -> None:
-    memory = InMemoryGovernedMemory()
-    author = Principal(id="author", groups=["a", "b"], projects=["project"])
-    full_approver = Principal(
-        id="full", groups=["a", "b"], projects=["project"], roles=["approver"]
-    )
-    partial_approver = Principal(
-        id="partial", groups=["a"], projects=["project"], roles=["approver"]
-    )
-    request = MemoryProposalCreateRequest(
+def test_memory_mutations_are_available_to_every_project_member() -> None:
+    memory = InMemorySharedMemory()
+    author = Principal(id="author", groups=["a"], projects=["project"])
+    teammate = Principal(id="teammate", groups=["different"], projects=["project"])
+    request = SharedMemoryCreateRequest(
         project="project",
-        access_groups=["a", "b"],
         title="Scoped memory",
-        body="Both groups protect this record.",
+        body="The project protects this record.",
         provenance=Citation(repository="org/repo", path="incident.md", revision="rev"),
         evidence=[Citation(repository="org/repo", path="test.py", revision="rev")],
         expires_at=datetime.now(UTC) + timedelta(days=1),
     )
-    proposal = asyncio.run(memory.propose(request, author, "proposal-key"))
-    decision = MemoryDecisionRequest(expected_revision=1, reason="reviewed")
-
-    with pytest.raises(MemoryNotFoundError):
-        asyncio.run(
-            memory.decide(
-                proposal.id,
-                decision,
-                partial_approver,
-                "partial-approval",
-                approve=True,
-            )
+    created = asyncio.run(memory.create(request, author, "create-key"))
+    expired = asyncio.run(
+        memory.expire(
+            created.memory.id,
+            MemoryExpireRequest(expected_revision=1, reason="obsolete"),
+            teammate,
+            "expire-key",
         )
-
-    approved = asyncio.run(
-        memory.decide(proposal.id, decision, full_approver, "full-approval", approve=True)
     )
-    assert approved.memory is not None
+    assert expired.memory.last_modified_by == "teammate"
+
+
+def test_memory_receipt_replay_rechecks_current_project_membership() -> None:
+    memory = InMemorySharedMemory()
+    admitted = Principal(id="developer", projects=["project"])
+    revoked = Principal(id="developer", projects=[])
+    create_request = SharedMemoryCreateRequest(
+        project="project",
+        title="Scoped memory",
+        body="Only current project members may replay mutations.",
+        provenance=Citation(repository="org/repo", path="incident.md", revision="rev"),
+        evidence=[Citation(repository="org/repo", path="test.py", revision="rev")],
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    created = asyncio.run(memory.create(create_request, admitted, "create"))
+    update_request = SharedMemoryUpdateRequest(
+        expected_revision=1,
+        title="Updated",
+        body=create_request.body,
+        provenance=create_request.provenance,
+        evidence=create_request.evidence,
+        expires_at=create_request.expires_at,
+    )
+    asyncio.run(memory.update(created.memory.id, update_request, admitted, "update"))
+
     with pytest.raises(MemoryNotFoundError):
-        asyncio.run(
-            memory.expire(
-                approved.memory.id,
-                MemoryDecisionRequest(
-                    expected_revision=approved.memory.revision,
-                    reason="partial expiry",
-                ),
-                partial_approver,
-                "partial-expiry",
-            )
-        )
+        asyncio.run(memory.update(created.memory.id, update_request, revoked, "update"))
+
+    current = memory.snapshot()[0][0]
+    expire_request = MemoryExpireRequest(expected_revision=current.revision, reason="obsolete")
+    asyncio.run(memory.expire(current.id, expire_request, admitted, "expire"))
+    with pytest.raises(MemoryNotFoundError):
+        asyncio.run(memory.expire(current.id, expire_request, revoked, "expire"))

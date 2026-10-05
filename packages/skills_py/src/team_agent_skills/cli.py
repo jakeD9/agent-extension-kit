@@ -18,7 +18,7 @@ from team_agent_skills.distribution import (
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="team-agent")
     commands = parser.add_subparsers(dest="command", required=True)
-    skills = commands.add_parser("skills", help="Discover and install approved team skills")
+    skills = commands.add_parser("skills", help="Discover and install canonical Git team skills")
     skill_commands = skills.add_subparsers(dest="skills_command", required=True)
 
     list_parser = skill_commands.add_parser("list", help="List authorized skills")

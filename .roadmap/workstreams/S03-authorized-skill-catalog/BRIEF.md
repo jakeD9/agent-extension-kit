@@ -1,5 +1,8 @@
 # S03 — Authorized Skill-Catalog Tracer
 
+> Historical slice brief. “Authorized” now means project/domain admission. Per-skill group filtering
+> is superseded and is being removed before S09.
+
 Depends on S02. Port skill metadata/body parsing into Python, scan the pinned Git/filesystem content
 pack into an in-memory catalog at startup, and expose authorized REST list/get operations through the
 same principal and policy boundary as knowledge search. Metadata discovery must not leak unauthorized

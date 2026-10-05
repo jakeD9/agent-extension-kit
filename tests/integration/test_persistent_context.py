@@ -12,17 +12,17 @@ from pymongo.server_api import ServerApi
 from team_agent_contracts import (
     Citation,
     KnowledgeSearchRequest,
-    MemoryDecisionRequest,
-    MemoryProposalCreateRequest,
     MemorySearchRequest,
     Principal,
+    SharedMemoryCreateRequest,
+    SharedMemoryUpdateRequest,
     SkillListRequest,
 )
 from team_agent_database import (
     KnowledgeChunkCollection,
     MongoContextRepository,
-    MongoGovernedMemory,
     MongoKnowledgeIndex,
+    MongoSharedMemory,
 )
 from team_context_core import GitSkillCatalog, MemoryConflictError
 from team_context_service import load_content_pack
@@ -45,37 +45,37 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
         database = first[context_database]
         repository = MongoContextRepository(database)
         await repository.migrate()
-        memory_service = MongoGovernedMemory(database)
+        memory_service = MongoSharedMemory(database)
         await memory_service.verify_transactions()
-        invalid_proposal = {
+        invalid_memory = {
             "_id": f"invalid-{source_id}",
             "schema_version": "1",
             "project": source_id,
-            "access_groups": ["engineering"],
             "title": "Invalid fixture",
             "body": "The database must reject this record.",
             "provenance": {"repository": "org/repo", "path": "INC.md", "revision": "rev"},
             "evidence": [],
             "author_id": "integration",
-            "status": "proposed",
+            "last_modified_by": "integration",
+            "canonicality": "supplemental",
             "expires_at": datetime.now(UTC) + timedelta(days=1),
             "created_at": datetime.now(UTC),
             "updated_at": datetime.now(UTC),
             "revision": 1,
         }
         with pytest.raises(WriteError):
-            await database["memory_proposals"].insert_one(invalid_proposal)
-        invalid_proposal["_id"] = f"invalid-citation-{source_id}"
-        invalid_proposal["evidence"] = [
+            await database["shared_memories"].insert_one(invalid_memory)
+        invalid_memory["_id"] = f"invalid-citation-{source_id}"
+        invalid_memory["evidence"] = [
             {"repository": "org/repo", "path": "test.py", "revision": "rev"}
         ]
-        invalid_proposal["provenance"] = {
+        invalid_memory["provenance"] = {
             "repository": "",
             "path": "INC.md",
             "revision": "rev",
         }
         with pytest.raises(WriteError):
-            await database["memory_proposals"].insert_one(invalid_proposal)
+            await database["shared_memories"].insert_one(invalid_memory)
         pack = load_content_pack(EXTENSION_PATH, "integration-revision")
         chunks = [
             chunk.model_copy(update={"id": f"{source_id}:{chunk.id}", "project": source_id})
@@ -92,9 +92,11 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
             uri, server_api=ServerApi("1"), tz_aware=True
         )
         restarted_database = restarted[context_database]
-        restarted_memory = MongoGovernedMemory(restarted_database)
+        restarted_memory = MongoSharedMemory(restarted_database)
         index = MongoKnowledgeIndex(
-            cast(KnowledgeChunkCollection, restarted_database["document_chunks"])
+            cast(KnowledgeChunkCollection, restarted_database["knowledge_chunks"]),
+            cast(KnowledgeChunkCollection, restarted_database["active_knowledge_revisions"]),
+            source_id,
         )
         results = await index.search(
             KnowledgeSearchRequest(query="vendor idempotency identifier", project=source_id),
@@ -109,7 +111,7 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
 
         denied = await index.search(
             KnowledgeSearchRequest(query="idempotency", project=source_id),
-            Principal(id="outsider", groups=["other"], projects=[source_id]),
+            Principal(id="outsider", groups=["other"], projects=["other"]),
         )
         assert denied == []
 
@@ -131,20 +133,14 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
         unauthorized_skill = await skill_catalog.get(
             "diagnose-and-fix",
             source_id,
-            Principal(id="outsider", groups=["other"], projects=[source_id]),
+            Principal(id="outsider", groups=["other"], projects=["other"]),
         )
         assert unauthorized_skill is None
 
         author = Principal(id=f"author-{source_id}", groups=["engineering"], projects=[source_id])
-        approver = Principal(
-            id=f"approver-{source_id}",
-            groups=["engineering"],
-            projects=[source_id],
-            roles=["approver"],
-        )
-        proposal_request = MemoryProposalCreateRequest(
+        teammate = Principal(id=f"teammate-{source_id}", groups=["other"], projects=[source_id])
+        memory_request = SharedMemoryCreateRequest(
             project=source_id,
-            access_groups=["engineering"],
             title="Restart-persistent retry key",
             body="Use the vendor delivery identifier.",
             provenance=Citation(repository="org/incidents", path="INC.md", revision="a"),
@@ -153,23 +149,25 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
         )
         identical_key = f"same-race-{source_id}"
         identical_results = await asyncio.gather(
-            restarted_memory.propose(proposal_request, author, identical_key),
-            restarted_memory.propose(proposal_request, author, identical_key),
+            restarted_memory.create(memory_request, author, identical_key),
+            restarted_memory.create(memory_request, author, identical_key),
             return_exceptions=True,
         )
         assert all(not isinstance(result, BaseException) for result in identical_results)
         identical_ids = {
-            result.id for result in identical_results if not isinstance(result, BaseException)
+            result.memory.id
+            for result in identical_results
+            if not isinstance(result, BaseException)
         }
         assert len(identical_ids) == 1
         assert (
-            await restarted_database["audit_events"].count_documents(
+            await restarted_database["shared_memory_audit_events"].count_documents(
                 {"idempotency_key": identical_key}
             )
             == 1
         )
         assert (
-            await restarted_database["memory_idempotency"].count_documents(
+            await restarted_database["shared_memory_idempotency"].count_documents(
                 {"_id": {"$regex": identical_key}}
             )
             == 1
@@ -177,13 +175,13 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
 
         conflicting_key = f"different-race-{source_id}"
         conflicting_results = await asyncio.gather(
-            restarted_memory.propose(
-                proposal_request.model_copy(update={"title": "First claim"}),
+            restarted_memory.create(
+                memory_request.model_copy(update={"title": "First claim"}),
                 author,
                 conflicting_key,
             ),
-            restarted_memory.propose(
-                proposal_request.model_copy(update={"title": "Second claim"}),
+            restarted_memory.create(
+                memory_request.model_copy(update={"title": "Second claim"}),
                 author,
                 conflicting_key,
             ),
@@ -192,52 +190,40 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
         assert sum(isinstance(result, MemoryConflictError) for result in conflicting_results) == 1
         assert sum(not isinstance(result, BaseException) for result in conflicting_results) == 1
         assert (
-            await restarted_database["audit_events"].count_documents(
+            await restarted_database["shared_memory_audit_events"].count_documents(
                 {"idempotency_key": conflicting_key}
             )
             == 1
         )
         assert (
-            await restarted_database["memory_idempotency"].count_documents(
+            await restarted_database["shared_memory_idempotency"].count_documents(
                 {"_id": {"$regex": conflicting_key}}
             )
             == 1
         )
-        proposal = await restarted_memory.propose(proposal_request, author, f"propose-{source_id}")
-        approved = await restarted_memory.decide(
-            proposal.id,
-            MemoryDecisionRequest(expected_revision=1, reason="verified"),
-            approver,
-            f"approve-{source_id}",
-            approve=True,
-        )
-        replayed = await restarted_memory.decide(
-            proposal.id,
-            MemoryDecisionRequest(expected_revision=1, reason="verified"),
-            approver,
-            f"approve-{source_id}",
-            approve=True,
-        )
-        assert replayed.memory == approved.memory
-        racing_proposal = await restarted_memory.propose(
-            proposal_request,
-            author,
-            f"race-propose-{source_id}",
+        created = await restarted_memory.create(memory_request, author, f"create-{source_id}")
+        replayed = await restarted_memory.create(memory_request, author, f"create-{source_id}")
+        assert replayed.memory == created.memory
+        update_request = SharedMemoryUpdateRequest(
+            expected_revision=created.memory.revision,
+            title="Updated retry key",
+            body="Use the new delivery identifier.",
+            provenance=memory_request.provenance,
+            evidence=memory_request.evidence,
+            expires_at=memory_request.expires_at,
         )
         race_results = await asyncio.gather(
-            restarted_memory.decide(
-                racing_proposal.id,
-                MemoryDecisionRequest(expected_revision=1, reason="reviewer one"),
-                approver,
+            restarted_memory.update(
+                created.memory.id,
+                update_request,
+                teammate,
                 f"race-one-{source_id}",
-                approve=True,
             ),
-            restarted_memory.decide(
-                racing_proposal.id,
-                MemoryDecisionRequest(expected_revision=1, reason="reviewer two"),
-                approver,
+            restarted_memory.update(
+                created.memory.id,
+                update_request.model_copy(update={"title": "Competing update"}),
+                author,
                 f"race-two-{source_id}",
-                approve=False,
             ),
             return_exceptions=True,
         )
@@ -249,23 +235,24 @@ def test_context_persists_across_clients_and_cannot_read_runtime_database() -> N
             uri, server_api=ServerApi("1"), tz_aware=True
         )
         final_database = final_client[context_database]
-        final_memory = MongoGovernedMemory(final_database)
+        final_memory = MongoSharedMemory(final_database)
         found, _ = await final_memory.search(
             MemorySearchRequest(query="delivery identifier", project=source_id), author
         )
-        assert approved.memory is not None
-        assert approved.memory.id in [item.id for item in found]
+        assert created.memory.id in [item.id for item in found]
 
         with pytest.raises(OperationFailure, match="not authorized"):
             await final_client[runtime_database]["sessions"].find_one({})
 
-        await final_database["documents"].delete_many({"source_id": source_id})
-        await final_database["document_chunks"].delete_many({"source_id": source_id})
-        await final_database["source_revisions"].delete_many({"source_id": source_id})
-        await final_database["memories"].delete_many({"project": source_id})
-        await final_database["memory_proposals"].delete_many({"project": source_id})
-        await final_database["audit_events"].delete_many({"project": source_id})
-        await final_database["memory_idempotency"].delete_many({"_id": {"$regex": source_id}})
+        await final_database["knowledge_documents"].delete_many({"source_id": source_id})
+        await final_database["knowledge_chunks"].delete_many({"source_id": source_id})
+        await final_database["knowledge_revisions"].delete_many({"source_id": source_id})
+        await final_database["active_knowledge_revisions"].delete_many({"source_id": source_id})
+        await final_database["shared_memories"].delete_many({"project": source_id})
+        await final_database["shared_memory_audit_events"].delete_many({"project": source_id})
+        await final_database["shared_memory_idempotency"].delete_many(
+            {"_id": {"$regex": source_id}}
+        )
         await final_client.close()
 
     asyncio.run(exercise())

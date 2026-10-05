@@ -99,7 +99,6 @@ def _handler(
                             "description": item.description,
                             "version": item.version,
                             "projects": ["platform"],
-                            "access_groups": ["engineering"],
                             "allowed_tools": [],
                             "citation": item.citation.model_dump(mode="json"),
                         }

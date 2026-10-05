@@ -27,18 +27,19 @@ text.
 
 `uv run team-context-mcp` exposes five model-facing tools:
 
-- `search_team_knowledge` returns approved excerpts with citations.
-- `list_team_skills` advertises authorized metadata and an opaque continuation cursor.
-- `get_team_skill` loads one authorized body and provenance after discovery.
-- `search_team_memory` returns only approved, unexpired, unsuperseded scoped memory.
-- `propose_team_memory` submits sourced non-authoritative proposals for separate review.
+- `search_team_knowledge` returns canonical Git excerpts with exact-revision citations.
+- `list_team_skills` advertises domain metadata and an opaque continuation cursor.
+- `get_team_skill` loads one domain body and provenance after discovery.
+- `search_team_memory` returns current supplemental shared working memory.
+- `create_team_memory` creates sourced supplemental memory for the admitted team.
 
-MCP has no approve, reject, expire, or audit tool; model calls cannot promote memory.
+MCP has no update, expire, audit, or canonical-promotion tool. Model calls cannot make working memory
+canonical; that requires a reviewed Git change.
 
 Tool descriptions explain when not to use each operation. Inputs are bounded, all fields are
 described, and service failures become actionable safe tool errors. Repository content and skill
 bodies are context, not authorization. The MCP process receives only the scoped service URL/token;
-authorization is enforced again by the context service.
+project/domain admission is enforced again by the context service.
 
 Project identifiers are limited to 200 characters, skill names to 128 kebab-case characters, and
 exact revisions to 256 characters in REST, CLI client validation, and MCP schemas.
@@ -52,7 +53,7 @@ unless that broader availability is intentional.
 - Python MCP SDK: `mcp>=2,<3`, locked at 2.3.0. The implementation uses v2 `MCPServer`, not the
   removed v1 `FastMCP` path.
 - Deterministic tests connect with v2 `Client(server)` in memory and through a real stdio subprocess,
-  call the retrieval and proposal surfaces, cover denied scope and pagination, and compare
+  call the retrieval and creation surfaces, cover denied scope and pagination, and compare
   REST/CLI/MCP snake_case data.
 - The official MCP Inspector strict `tools/list` check passes the complete five-tool surface with no
   schema portability findings.
@@ -65,3 +66,15 @@ unless that broader availability is intentional.
 There is no rate limit in the adapter itself. The context service and its dependencies remain the
 authority for operational limits; callers should retry only transient availability failures and
 must not retry authorization or validation failures unchanged.
+
+## Local content bootstrap
+
+Production startup does not publish Git content. It requires an immutable 40-character commit SHA
+and verifies that MongoDB's active knowledge revision exactly matches the skill catalog loaded from
+that checkout. The example local environment explicitly sets
+`TEAM_AGENT_BOOTSTRAP_CONTENT_ON_STARTUP=true` and
+`TEAM_AGENT_ALLOW_MUTABLE_CONTENT_REVISION=true` so fixture content can be staged and activated from
+`local-example`. Mutable bootstrap derives a deterministic projection hash from the full content, so
+same-label edits are restaged even when document and chunk counts do not change. Those flags are
+development conveniences; omit both in production and publish through the protected
+CI/reconciliation contract.

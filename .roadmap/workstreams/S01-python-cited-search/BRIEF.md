@@ -1,5 +1,8 @@
 # S01 — Python Cited-Search Tracer
 
+> Historical slice brief. Its per-record group/authority filtering is superseded by the normative
+> project/domain admission model. The S08 corrective pass must remove that policy before S09 starts.
+
 ## Goal and dependencies
 
 Deliver the smallest Python vertical slice: validate the Git-owned extension pack and return
@@ -22,4 +25,3 @@ parity implementation.
 - Inaccessible content is absent before scoring; invalid authentication and input use error envelopes.
 - Health/readiness report the loaded content pack; `team-context` runs non-root in its image.
 - Run lock, Ruff, formatting, mypy, pytest, workspace build, and image checks.
-

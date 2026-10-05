@@ -20,7 +20,6 @@ kitCompatibility: ">=0.1.0"
 repository: test
 projects:
   - id: project
-    accessGroups: [engineering]
 knowledge: {roots: [knowledge]}
 skills: {root: skills}
 """.strip(),
@@ -35,7 +34,6 @@ name: {name}
 description: {name}
 version: "1"
 projects: [project]
-accessGroups: [engineering]
 allowedTools: []
 {extra}
 ---
@@ -65,7 +63,6 @@ def test_loads_revision_pinned_skill_packages() -> None:
     assert skill.name == "diagnose-and-fix"
     assert skill.description.startswith("Use when an error")
     assert skill.projects == ["event-ingestion"]
-    assert skill.access_groups == ["engineering"]
     assert skill.allowed_tools == ["search_team_knowledge", "get_team_document"]
     assert skill.body.startswith("# Diagnose and fix")
     assert skill.citation.model_dump(exclude_none=True) == {
@@ -89,7 +86,6 @@ kitCompatibility: ">=0.1.0"
 repository: test-repository
 projects:
   - id: project
-    accessGroups: [engineering]
 knowledge: {roots: [knowledge]}
 skills: {root: skills}
 """.strip(),
@@ -101,7 +97,6 @@ name: review
 description: Review changes
 version: "1"
 projects: [project]
-accessGroups: [engineering]
 allowedTools: []
 resources: [references/guide.md]
 ---
@@ -170,7 +165,6 @@ kitCompatibility: ">=0.1.0"
 repository: test
 projects:
   - id: declared
-    accessGroups: [engineering]
 knowledge: {roots: [knowledge]}
 skills: {root: skills}
 """.strip(),
@@ -182,7 +176,6 @@ name: unsafe
 description: Invalid scope
 version: "1"
 projects: [undeclared]
-accessGroups: [engineering]
 allowedTools: []
 ---
 # Unsafe

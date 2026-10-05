@@ -1,5 +1,8 @@
 # S05 Summary — Verified Skill Pull and Lockfile CLI
 
+> Historical delivery evidence. Installation and frozen-lock behavior remain applicable; catalog
+> visibility is being corrected to the complete admitted domain.
+
 ## Delivered
 
 - Added the shared `team-agent-skills` Python package with an authenticated, bounded `SkillClient`

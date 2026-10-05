@@ -3,6 +3,7 @@
 Depends on S08, S09, and S11. Exercise the fixture incident end to end: the coordinator retrieves
 the ADR and authorized `diagnose-and-fix` skill, persists workflow stages, submits one mock coding
 job, suspends, consumes a validated completion, resumes the logical conversation, produces one mock
-draft-PR outcome, and proposes any reusable lesson as non-authoritative memory. Exclude real Docker,
+draft-PR outcome, and records any reusable lesson as supplemental shared working memory. If the
+lesson should become canonical, produce a separate Git change for normal team review. Exclude real Docker,
 Codex, Git credentials, and Slack. Verify restart at every persisted boundary, duplicate delivery,
 needs-input/approval states, and no repeated external action.

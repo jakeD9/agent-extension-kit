@@ -36,7 +36,7 @@ def app() -> FastAPI:
                     "outsider-token": Principal(
                         id="dev-2",
                         groups=["other"],
-                        projects=["event-ingestion"],
+                        projects=["other"],
                     ),
                 }
             ),

@@ -10,7 +10,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 from team_agent_contracts import (
-    Authority,
     Citation,
     ImmutableSkillPackageManifest,
     KnowledgeResult,
@@ -18,15 +17,14 @@ from team_agent_contracts import (
     MemoryAuditAction,
     MemoryAuditEvent,
     MemoryAuditListRequest,
-    MemoryDecisionRequest,
-    MemoryDecisionResponse,
+    MemoryExpireRequest,
     MemoryMutationResponse,
-    MemoryProposal,
-    MemoryProposalCreateRequest,
-    MemoryProposalStatus,
     MemorySearchItem,
     MemorySearchRequest,
     Principal,
+    SharedMemoryCreateRequest,
+    SharedMemoryResponse,
+    SharedMemoryUpdateRequest,
     SkillDetail,
     SkillListRequest,
     SkillPackageBundle,
@@ -42,8 +40,6 @@ class KnowledgeChunk(BaseModel):
 
     id: str
     project: str
-    access_groups: list[str]
-    authority: Authority
     title: str
     body: str
     citation: Citation
@@ -57,7 +53,6 @@ class SkillPackage(BaseModel):
     description: str
     version: str
     projects: list[str]
-    access_groups: list[str]
     allowed_tools: list[str]
     body: str
     citation: Citation
@@ -99,28 +94,26 @@ class InvalidMemoryCursor(ValueError):
     pass
 
 
-class GovernedMemory(Protocol):
-    async def propose(
+class SharedMemoryStore(Protocol):
+    async def create(
         self,
-        request: MemoryProposalCreateRequest,
+        request: SharedMemoryCreateRequest,
         principal: Principal,
         idempotency_key: str,
-    ) -> MemoryProposal: ...
+    ) -> SharedMemoryResponse: ...
 
-    async def decide(
+    async def update(
         self,
-        proposal_id: str,
-        request: MemoryDecisionRequest,
+        memory_id: str,
+        request: SharedMemoryUpdateRequest,
         principal: Principal,
         idempotency_key: str,
-        *,
-        approve: bool,
-    ) -> MemoryDecisionResponse: ...
+    ) -> SharedMemoryResponse: ...
 
     async def expire(
         self,
         memory_id: str,
-        request: MemoryDecisionRequest,
+        request: MemoryExpireRequest,
         principal: Principal,
         idempotency_key: str,
     ) -> MemoryMutationResponse: ...
@@ -176,10 +169,6 @@ class InMemoryKnowledgeIndex:
         for chunk in self._chunks:
             if chunk.project != request.project:
                 continue
-            if not set(chunk.access_groups).intersection(principal.groups):
-                continue
-            if chunk.authority is not Authority.APPROVED:
-                continue
             score = sum(3 for term in _tokenize(chunk.title) if term in query_terms)
             score += sum(1 for term in _tokenize(chunk.body) if term in query_terms)
             if score > 0:
@@ -192,7 +181,6 @@ class InMemoryKnowledgeIndex:
                 title=chunk.title,
                 excerpt=chunk.body[:500],
                 score=float(score),
-                authority=chunk.authority,
                 citation=chunk.citation,
             )
             for chunk, score in scored[: request.limit]
@@ -247,11 +235,7 @@ class GitSkillCatalog:
 
     @staticmethod
     def _authorized(skill: SkillPackage, project: str, principal: Principal) -> bool:
-        return (
-            project in principal.projects
-            and project in skill.projects
-            and bool(set(skill.access_groups).intersection(principal.groups))
-        )
+        return project in principal.projects and project in skill.projects
 
     async def list(
         self, request: SkillListRequest, principal: Principal
@@ -279,7 +263,6 @@ class GitSkillCatalog:
                 description=skill.description,
                 version=skill.version,
                 projects=skill.projects,
-                access_groups=skill.access_groups,
                 allowed_tools=skill.allowed_tools,
                 citation=skill.citation,
             )
@@ -314,7 +297,6 @@ class GitSkillCatalog:
             description=skill.description,
             version=skill.version,
             projects=skill.projects,
-            access_groups=skill.access_groups,
             allowed_tools=skill.allowed_tools,
             citation=skill.citation,
             body=skill.body,
@@ -392,14 +374,13 @@ def _decode_memory_cursor(cursor: str, kind: str, binding: str) -> str:
     return payload["after"]
 
 
-class InMemoryGovernedMemory:
-    """Reference governed-memory application service used by tests and mock mode."""
+class InMemorySharedMemory:
+    """Reference project-scoped supplemental-memory service."""
 
     def __init__(
         self,
         *,
         clock: Callable[[], datetime] | None = None,
-        proposals: Sequence[MemoryProposal] = (),
         memories: Sequence[TeamMemory] = (),
         audits: Sequence[MemoryAuditEvent] = (),
         idempotency: dict[tuple[str, str, str], tuple[str, object]] | None = None,
@@ -411,7 +392,6 @@ class InMemoryGovernedMemory:
             return value.replace(microsecond=(value.microsecond // 1_000) * 1_000)
 
         self._clock = millisecond_clock
-        self._proposals = {proposal.id: proposal for proposal in proposals}
         self._memories = {memory.id: memory for memory in memories}
         self._audits = list(audits)
         self._idempotency = dict(idempotency or {})
@@ -419,13 +399,11 @@ class InMemoryGovernedMemory:
     def snapshot(
         self,
     ) -> tuple[
-        list[MemoryProposal],
         list[TeamMemory],
         list[MemoryAuditEvent],
         dict[tuple[str, str, str], tuple[str, object]],
     ]:
         return (
-            list(self._proposals.values()),
             list(self._memories.values()),
             list(self._audits),
             dict(self._idempotency),
@@ -435,24 +413,13 @@ class InMemoryGovernedMemory:
     def _fingerprint(value: BaseModel) -> str:
         return sha256(value.model_dump_json(exclude_none=True).encode()).hexdigest()
 
-    @staticmethod
-    def _can_write(
-        project: str, access_groups: Sequence[str], principal: Principal, *, approve: bool = False
-    ) -> bool:
-        return (
-            project in principal.projects
-            and set(access_groups).issubset(principal.groups)
-            and (not approve or "approver" in principal.roles)
-        )
-
     def _record(
         self,
         action: MemoryAuditAction,
         actor_id: str,
-        proposal: MemoryProposal,
+        memory: TeamMemory,
         idempotency_key: str,
         *,
-        memory_id: str | None = None,
         reason: str | None = None,
     ) -> None:
         self._audits.append(
@@ -460,160 +427,129 @@ class InMemoryGovernedMemory:
                 id=str(uuid4()),
                 action=action,
                 actor_id=actor_id,
-                project=proposal.project,
-                proposal_id=proposal.id,
-                memory_id=memory_id,
-                proposal_revision=proposal.revision,
+                project=memory.project,
+                memory_id=memory.id,
+                memory_revision=memory.revision,
                 idempotency_key=idempotency_key,
                 reason=reason,
                 occurred_at=self._clock(),
             )
         )
 
-    async def propose(
+    async def create(
         self,
-        request: MemoryProposalCreateRequest,
+        request: SharedMemoryCreateRequest,
         principal: Principal,
         idempotency_key: str,
-    ) -> MemoryProposal:
-        if not self._can_write(request.project, request.access_groups, principal):
-            raise MemoryForbiddenError("The caller cannot propose memory for this scope")
-        key = (principal.id, "propose", idempotency_key)
+    ) -> SharedMemoryResponse:
+        if request.project not in principal.projects:
+            raise MemoryForbiddenError("The caller cannot create memory for this project")
+        key = (principal.id, "create", idempotency_key)
         fingerprint = self._fingerprint(request)
         prior = self._idempotency.get(key)
         if prior is not None:
             if prior[0] != fingerprint:
                 raise MemoryConflictError("The idempotency key was reused with different input")
-            assert isinstance(prior[1], MemoryProposal)
+            assert isinstance(prior[1], SharedMemoryResponse)
+            if prior[1].memory.project not in principal.projects:
+                raise MemoryNotFoundError("Memory not found")
             return prior[1]
         now = self._clock()
         if request.expires_at <= now:
-            raise MemoryConflictError("A proposed memory must expire in the future")
-        proposal_data = request.model_dump()
-        proposal_expires_at = request.expires_at
-        proposal_data["expires_at"] = proposal_expires_at.replace(
-            microsecond=(proposal_expires_at.microsecond // 1_000) * 1_000
+            raise MemoryConflictError("A shared memory must expire in the future")
+        superseded: TeamMemory | None = None
+        if request.supersedes_memory_id is not None:
+            superseded = self._memories.get(request.supersedes_memory_id)
+            if (
+                superseded is None
+                or superseded.project != request.project
+                or superseded.superseded_by_memory_id is not None
+                or superseded.expired_at is not None
+                or superseded.expires_at <= now
+            ):
+                raise MemoryConflictError("The superseded memory is not current in this project")
+        request_data = request.model_dump()
+        expires_at = request.expires_at.replace(
+            microsecond=(request.expires_at.microsecond // 1_000) * 1_000
         )
-        proposal = MemoryProposal(
+        request_data["expires_at"] = expires_at
+        memory = TeamMemory(
             id=str(uuid4()),
-            **proposal_data,
+            **request_data,
             author_id=principal.id,
-            status=MemoryProposalStatus.PROPOSED,
+            last_modified_by=principal.id,
             created_at=now,
             updated_at=now,
             revision=1,
         )
-        self._proposals[proposal.id] = proposal
-        self._record(MemoryAuditAction.PROPOSED, principal.id, proposal, idempotency_key)
-        self._idempotency[key] = (fingerprint, proposal)
-        return proposal
+        self._memories[memory.id] = memory
+        if superseded is not None:
+            replaced = superseded.model_copy(
+                update={
+                    "superseded_by_memory_id": memory.id,
+                    "last_modified_by": principal.id,
+                    "updated_at": now,
+                    "revision": superseded.revision + 1,
+                }
+            )
+            self._memories[superseded.id] = replaced
+            self._record(MemoryAuditAction.SUPERSEDED, principal.id, replaced, idempotency_key)
+        self._record(MemoryAuditAction.CREATED, principal.id, memory, idempotency_key)
+        response = SharedMemoryResponse(memory=memory, request_id="")
+        self._idempotency[key] = (fingerprint, response)
+        return response
 
-    async def decide(
+    async def update(
         self,
-        proposal_id: str,
-        request: MemoryDecisionRequest,
+        memory_id: str,
+        request: SharedMemoryUpdateRequest,
         principal: Principal,
         idempotency_key: str,
-        *,
-        approve: bool,
-    ) -> MemoryDecisionResponse:
-        action = "approve" if approve else "reject"
-        key = (principal.id, f"{action}:{proposal_id}", idempotency_key)
+    ) -> SharedMemoryResponse:
+        key = (principal.id, f"update:{memory_id}", idempotency_key)
         fingerprint = self._fingerprint(request)
         prior = self._idempotency.get(key)
         if prior is not None:
             if prior[0] != fingerprint:
                 raise MemoryConflictError("The idempotency key was reused with different input")
-            assert isinstance(prior[1], MemoryDecisionResponse)
+            assert isinstance(prior[1], SharedMemoryResponse)
+            if prior[1].memory.project not in principal.projects:
+                raise MemoryNotFoundError("Memory not found")
             return prior[1]
-        proposal = self._proposals.get(proposal_id)
-        if proposal is None:
-            raise MemoryNotFoundError("Memory proposal not found")
-        if proposal.project not in principal.projects or not set(proposal.access_groups).issubset(
-            principal.groups
-        ):
-            raise MemoryNotFoundError("Memory proposal not found")
-        if "approver" not in principal.roles:
-            raise MemoryForbiddenError("The caller cannot decide memory proposals")
+        memory = self._memories.get(memory_id)
+        if memory is None or memory.project not in principal.projects:
+            raise MemoryNotFoundError("Memory not found")
         now = self._clock()
-        if proposal.status is not MemoryProposalStatus.PROPOSED:
-            raise MemoryConflictError("The memory proposal is no longer pending")
-        if proposal.revision != request.expected_revision:
-            raise MemoryConflictError("The memory proposal revision changed")
-        if proposal.expires_at <= now:
-            raise MemoryConflictError("The memory proposal has expired")
-
-        memory: TeamMemory | None = None
-        status = MemoryProposalStatus.APPROVED if approve else MemoryProposalStatus.REJECTED
-        updated = proposal.model_copy(
+        if memory.revision != request.expected_revision:
+            raise MemoryConflictError("The memory revision changed")
+        if memory.expired_at is not None or memory.superseded_by_memory_id is not None:
+            raise MemoryConflictError("The memory is no longer current")
+        if request.expires_at <= now:
+            raise MemoryConflictError("A shared memory must expire in the future")
+        updated = memory.model_copy(
             update={
-                "status": status,
-                "decision_reason": request.reason,
-                "decision_author_id": principal.id,
+                "title": request.title,
+                "body": request.body,
+                "provenance": request.provenance,
+                "evidence": request.evidence,
+                "expires_at": request.expires_at.replace(
+                    microsecond=(request.expires_at.microsecond // 1_000) * 1_000
+                ),
+                "last_modified_by": principal.id,
                 "updated_at": now,
-                "revision": proposal.revision + 1,
+                "revision": memory.revision + 1,
             }
         )
-        if approve:
-            superseded: TeamMemory | None = None
-            if proposal.supersedes_memory_id is not None:
-                superseded = self._memories.get(proposal.supersedes_memory_id)
-                if (
-                    superseded is None
-                    or superseded.project != proposal.project
-                    or superseded.access_groups != proposal.access_groups
-                    or superseded.superseded_by_memory_id is not None
-                    or superseded.expires_at <= now
-                ):
-                    raise MemoryConflictError("The superseded memory is not current in this scope")
-            memory_id = str(uuid4())
-            memory = TeamMemory(
-                id=memory_id,
-                proposal_id=proposal.id,
-                project=proposal.project,
-                access_groups=proposal.access_groups,
-                title=proposal.title,
-                body=proposal.body,
-                provenance=proposal.provenance,
-                evidence=proposal.evidence,
-                author_id=proposal.author_id,
-                approved_by=principal.id,
-                expires_at=proposal.expires_at,
-                supersedes_memory_id=proposal.supersedes_memory_id,
-                created_at=now,
-                revision=updated.revision,
-            )
-            updated = updated.model_copy(update={"memory_id": memory_id})
-            self._memories[memory_id] = memory
-            if superseded is not None:
-                self._memories[superseded.id] = superseded.model_copy(
-                    update={"superseded_by_memory_id": memory_id}
-                )
-                self._record(
-                    MemoryAuditAction.SUPERSEDED,
-                    principal.id,
-                    updated,
-                    idempotency_key,
-                    memory_id=superseded.id,
-                    reason=request.reason,
-                )
-        self._proposals[proposal_id] = updated
-        self._record(
-            MemoryAuditAction.APPROVED if approve else MemoryAuditAction.REJECTED,
-            principal.id,
-            updated,
-            idempotency_key,
-            memory_id=memory.id if memory is not None else None,
-            reason=request.reason,
-        )
-        response = MemoryDecisionResponse(proposal=updated, memory=memory, request_id="")
+        self._memories[memory_id] = updated
+        self._record(MemoryAuditAction.UPDATED, principal.id, updated, idempotency_key)
+        response = SharedMemoryResponse(memory=updated, request_id="")
         self._idempotency[key] = (fingerprint, response)
         return response
 
     async def expire(
         self,
         memory_id: str,
-        request: MemoryDecisionRequest,
+        request: MemoryExpireRequest,
         principal: Principal,
         idempotency_key: str,
     ) -> MemoryMutationResponse:
@@ -624,32 +560,34 @@ class InMemoryGovernedMemory:
             if prior[0] != fingerprint:
                 raise MemoryConflictError("The idempotency key was reused with different input")
             assert isinstance(prior[1], MemoryMutationResponse)
+            if prior[1].memory.project not in principal.projects:
+                raise MemoryNotFoundError("Memory not found")
             return prior[1]
         memory = self._memories.get(memory_id)
         if memory is None:
             raise MemoryNotFoundError("Memory not found")
-        if memory.project not in principal.projects or not set(memory.access_groups).issubset(
-            principal.groups
-        ):
+        if memory.project not in principal.projects:
             raise MemoryNotFoundError("Memory not found")
-        if "approver" not in principal.roles:
-            raise MemoryForbiddenError("The caller cannot expire memory")
         if memory.revision != request.expected_revision:
             raise MemoryConflictError("The memory revision changed")
         if memory.expired_at is not None or memory.superseded_by_memory_id is not None:
             raise MemoryConflictError("The memory is no longer current")
         now = self._clock()
         expired = memory.model_copy(
-            update={"expired_at": now, "expires_at": now, "revision": memory.revision + 1}
+            update={
+                "expired_at": now,
+                "expires_at": now,
+                "last_modified_by": principal.id,
+                "updated_at": now,
+                "revision": memory.revision + 1,
+            }
         )
         self._memories[memory_id] = expired
-        proposal = self._proposals[memory.proposal_id]
         self._record(
             MemoryAuditAction.EXPIRED,
             principal.id,
-            proposal,
+            expired,
             idempotency_key,
-            memory_id=memory_id,
             reason=request.reason,
         )
         response = MemoryMutationResponse(memory=expired, request_id="")
@@ -669,7 +607,6 @@ class InMemoryGovernedMemory:
         for memory in self._memories.values():
             if (
                 memory.project != request.project
-                or not set(memory.access_groups).intersection(principal.groups)
                 or memory.expires_at <= now
                 or memory.expired_at is not None
                 or memory.superseded_by_memory_id is not None
@@ -696,18 +633,17 @@ class InMemoryGovernedMemory:
     async def audit(
         self, request: MemoryAuditListRequest, principal: Principal
     ) -> tuple[list[MemoryAuditEvent], str | None]:
-        proposal = self._proposals.get(request.proposal_id)
+        memory = self._memories.get(request.memory_id)
         if (
-            proposal is None
-            or proposal.project != request.project
+            memory is None
+            or memory.project != request.project
             or request.project not in principal.projects
-            or not set(proposal.access_groups).intersection(principal.groups)
         ):
-            raise MemoryNotFoundError("Memory proposal not found")
-        binding = sha256(f"{request.project}\0{request.proposal_id}".encode()).hexdigest()
+            raise MemoryNotFoundError("Memory not found")
+        binding = sha256(f"{request.project}\0{request.memory_id}".encode()).hexdigest()
         after = _decode_memory_cursor(request.cursor, "audit", binding) if request.cursor else None
         events = sorted(
-            (event for event in self._audits if event.proposal_id == request.proposal_id),
+            (event for event in self._audits if event.memory_id == request.memory_id),
             key=lambda event: (event.occurred_at, event.id),
         )
         if after is not None:
@@ -725,9 +661,8 @@ class InMemoryGovernedMemory:
 
 __all__ = [
     "GitSkillCatalog",
-    "GovernedMemory",
-    "InMemoryGovernedMemory",
     "InMemoryKnowledgeIndex",
+    "InMemorySharedMemory",
     "InvalidMemoryCursor",
     "InvalidSkillCursor",
     "KnowledgeChunk",
@@ -735,6 +670,7 @@ __all__ = [
     "MemoryConflictError",
     "MemoryForbiddenError",
     "MemoryNotFoundError",
+    "SharedMemoryStore",
     "SkillCatalog",
     "SkillNotFoundError",
     "SkillPackage",

@@ -19,14 +19,14 @@ from team_agent_contracts import (
     KnowledgeSearchResponse,
     MemoryAuditListRequest,
     MemoryAuditResponse,
-    MemoryDecisionRequest,
-    MemoryDecisionResponse,
+    MemoryExpireRequest,
     MemoryMutationResponse,
-    MemoryProposalCreateRequest,
-    MemoryProposalResponse,
     MemorySearchRequest,
     MemorySearchResponse,
     Principal,
+    SharedMemoryCreateRequest,
+    SharedMemoryResponse,
+    SharedMemoryUpdateRequest,
     SkillGetRequest,
     SkillGetResponse,
     SkillListRequest,
@@ -38,15 +38,15 @@ from team_agent_contracts import (
 )
 from team_context_core import (
     GitSkillCatalog,
-    GovernedMemory,
-    InMemoryGovernedMemory,
     InMemoryKnowledgeIndex,
+    InMemorySharedMemory,
     InvalidMemoryCursor,
     InvalidSkillCursor,
     KnowledgeIndex,
     MemoryConflictError,
     MemoryForbiddenError,
     MemoryNotFoundError,
+    SharedMemoryStore,
     SkillCatalog,
     SkillNotFoundError,
     SkillRevisionNotFoundError,
@@ -64,7 +64,7 @@ class AppDependencies:
     authenticator: Authenticator
     knowledge_index: KnowledgeIndex | None = None
     skill_catalog: SkillCatalog | None = None
-    governed_memory: GovernedMemory | None = None
+    shared_memory: SharedMemoryStore | None = None
     readiness: Readiness | None = None
     startup: LifecycleHook | None = None
     shutdown: LifecycleHook | None = None
@@ -91,13 +91,24 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
     skills = dependencies.skill_catalog or GitSkillCatalog(
         dependencies.pack.skills, dependencies.pack.revision
     )
-    memories = dependencies.governed_memory or InMemoryGovernedMemory()
+    memories = dependencies.shared_memory or InMemorySharedMemory()
 
     @app.middleware("http")
     async def request_id_middleware(
         request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         request.state.request_id = request.headers.get("x-request-id") or str(uuid4())
+        if request.url.path.startswith("/v1/") and dependencies.readiness is not None:
+            status, _details = await dependencies.readiness()
+            if status != "ready":
+                unavailable_response = _error(
+                    "service_unavailable",
+                    "The context service is not ready",
+                    request.state.request_id,
+                    503,
+                )
+                unavailable_response.headers["x-request-id"] = request.state.request_id
+                return unavailable_response
         response = await call_next(request)
         response.headers["x-request-id"] = request.state.request_id
         return response
@@ -334,19 +345,19 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
         return None
 
     @app.post(
-        "/v1/memory-proposals",
+        "/v1/memories",
         status_code=201,
-        response_model=MemoryProposalResponse,
+        response_model=SharedMemoryResponse,
         openapi_extra={
             "requestBody": {
                 "required": True,
                 "content": {
-                    "application/json": {"schema": MemoryProposalCreateRequest.model_json_schema()}
+                    "application/json": {"schema": SharedMemoryCreateRequest.model_json_schema()}
                 },
             }
         },
     )
-    async def propose_memory(
+    async def create_memory(
         body: Annotated[object, Body()],
         request: Request,
         authorization: str | None = Header(default=None),
@@ -358,18 +369,18 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
         if (header_error := validate_idempotency(idempotency_key, request)) is not None:
             return header_error
         try:
-            proposal_request = MemoryProposalCreateRequest.model_validate(body)
+            create_request = SharedMemoryCreateRequest.model_validate(body)
         except ValidationError:
             return _error(
-                "validation_failed", "The memory proposal is invalid", request.state.request_id, 422
+                "validation_failed", "The shared memory is invalid", request.state.request_id, 422
             )
         try:
             assert principal is not None and idempotency_key is not None
-            proposal = await memories.propose(proposal_request, principal, idempotency_key)
+            result = await memories.create(create_request, principal, idempotency_key)
         except MemoryForbiddenError:
             return _error(
                 "forbidden",
-                "The caller cannot propose memory for this scope",
+                "The caller cannot create memory for this project",
                 request.state.request_id,
                 403,
             )
@@ -377,62 +388,59 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             return _error(
                 "memory_conflict", "The memory operation conflicts", request.state.request_id, 409
             )
-        response = MemoryProposalResponse(proposal=proposal, request_id=request.state.request_id)
+        response = SharedMemoryResponse(memory=result.memory, request_id=request.state.request_id)
         return JSONResponse(
             status_code=201,
             content=response.model_dump(mode="json", exclude_none=True),
-            headers={"location": f"/v1/memory-proposals/{proposal.id}"},
+            headers={"location": f"/v1/memories/{result.memory.id}"},
         )
 
-    async def decide_memory(
-        proposal_id: str,
-        body: object,
+    @app.put(
+        "/v1/memories/{memory_id}",
+        response_model=SharedMemoryResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {"schema": SharedMemoryUpdateRequest.model_json_schema()}
+                },
+            }
+        },
+    )
+    async def update_memory(
+        memory_id: str,
+        body: Annotated[object, Body()],
         request: Request,
-        authorization: str | None,
-        idempotency_key: str | None,
-        *,
-        approve: bool,
+        authorization: str | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None),
     ) -> JSONResponse:
         principal, auth_error = await authenticated(authorization, request)
         if auth_error is not None:
             return auth_error
         if (header_error := validate_idempotency(idempotency_key, request)) is not None:
             return header_error
-        if not proposal_id or len(proposal_id) > 128:
+        if not memory_id or len(memory_id) > 128:
             return _error(
                 "validation_failed",
-                "The memory proposal id is invalid",
+                "The memory id is invalid",
                 request.state.request_id,
                 422,
             )
         try:
-            decision_request = MemoryDecisionRequest.model_validate(body)
+            update_request = SharedMemoryUpdateRequest.model_validate(body)
         except ValidationError:
             return _error(
-                "validation_failed", "The memory decision is invalid", request.state.request_id, 422
+                "validation_failed", "The memory update is invalid", request.state.request_id, 422
             )
         try:
             assert principal is not None and idempotency_key is not None
-            result = await memories.decide(
-                proposal_id,
-                decision_request,
-                principal,
-                idempotency_key,
-                approve=approve,
-            )
+            result = await memories.update(memory_id, update_request, principal, idempotency_key)
         except MemoryNotFoundError:
             return _error(
-                "memory_proposal_not_found",
-                "Memory proposal not found",
+                "memory_not_found",
+                "Memory not found",
                 request.state.request_id,
                 404,
-            )
-        except MemoryForbiddenError:
-            return _error(
-                "forbidden",
-                "The caller cannot decide memory proposals",
-                request.state.request_id,
-                403,
             )
         except MemoryConflictError:
             return _error(
@@ -442,52 +450,6 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             content=result.model_copy(update={"request_id": request.state.request_id}).model_dump(
                 mode="json", exclude_none=True
             )
-        )
-
-    @app.post(
-        "/v1/memory-proposals/{proposal_id}/approve",
-        response_model=MemoryDecisionResponse,
-        openapi_extra={
-            "requestBody": {
-                "required": True,
-                "content": {
-                    "application/json": {"schema": MemoryDecisionRequest.model_json_schema()}
-                },
-            }
-        },
-    )
-    async def approve_memory(
-        proposal_id: str,
-        body: Annotated[object, Body()],
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None),
-    ) -> JSONResponse:
-        return await decide_memory(
-            proposal_id, body, request, authorization, idempotency_key, approve=True
-        )
-
-    @app.post(
-        "/v1/memory-proposals/{proposal_id}/reject",
-        response_model=MemoryDecisionResponse,
-        openapi_extra={
-            "requestBody": {
-                "required": True,
-                "content": {
-                    "application/json": {"schema": MemoryDecisionRequest.model_json_schema()}
-                },
-            }
-        },
-    )
-    async def reject_memory(
-        proposal_id: str,
-        body: Annotated[object, Body()],
-        request: Request,
-        authorization: str | None = Header(default=None),
-        idempotency_key: str | None = Header(default=None),
-    ) -> JSONResponse:
-        return await decide_memory(
-            proposal_id, body, request, authorization, idempotency_key, approve=False
         )
 
     @app.post(
@@ -530,7 +492,7 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             "requestBody": {
                 "required": True,
                 "content": {
-                    "application/json": {"schema": MemoryDecisionRequest.model_json_schema()}
+                    "application/json": {"schema": MemoryExpireRequest.model_json_schema()}
                 },
             }
         },
@@ -552,7 +514,7 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
                 "validation_failed", "The memory id is invalid", request.state.request_id, 422
             )
         try:
-            decision_request = MemoryDecisionRequest.model_validate(body)
+            decision_request = MemoryExpireRequest.model_validate(body)
         except ValidationError:
             return _error(
                 "validation_failed",
@@ -570,10 +532,6 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             )
         except MemoryNotFoundError:
             return _error("memory_not_found", "Memory not found", request.state.request_id, 404)
-        except MemoryForbiddenError:
-            return _error(
-                "forbidden", "The caller cannot expire memory", request.state.request_id, 403
-            )
         except MemoryConflictError:
             return _error(
                 "memory_conflict", "The memory operation conflicts", request.state.request_id, 409
@@ -582,11 +540,11 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
         return JSONResponse(content=response.model_dump(mode="json", exclude_none=True))
 
     @app.get(
-        "/v1/memory-proposals/{proposal_id}/audit",
+        "/v1/memories/{memory_id}/audit",
         response_model=MemoryAuditResponse,
     )
     async def list_memory_audit(
-        proposal_id: str,
+        memory_id: str,
         request: Request,
         authorization: str | None = Header(default=None),
     ) -> JSONResponse:
@@ -595,7 +553,7 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             return auth_error
         try:
             audit_request = MemoryAuditListRequest.model_validate(
-                {**dict(request.query_params), "proposal_id": proposal_id}
+                {**dict(request.query_params), "memory_id": memory_id}
             )
             assert principal is not None
             items, next_cursor = await memories.audit(audit_request, principal)
@@ -608,8 +566,8 @@ def build_app(dependencies: AppDependencies) -> FastAPI:
             )
         except MemoryNotFoundError:
             return _error(
-                "memory_proposal_not_found",
-                "Memory proposal not found",
+                "memory_not_found",
+                "Memory not found",
                 request.state.request_id,
                 404,
             )
