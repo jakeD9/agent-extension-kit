@@ -10,6 +10,7 @@ from pymongo.server_api import ServerApi
 from team_agent_contracts import Citation, SkillFileManifest, SkillLock, SkillLockPackage
 from team_agent_runtime import (
     AgentDecision,
+    AgentFailure,
     AgentTurnRequest,
     AgentTurnResult,
     AgentTurnStatus,
@@ -121,6 +122,51 @@ def test_runtime_conversation_transactions_and_restart() -> None:
             now + timedelta(seconds=63),
         )
         assert replay.replay_result == second_result
+
+        retry_request = _request(f"{conversation_id}-run-3", "Retry a transient failure")
+        retry_fingerprint = request_fingerprint(retry_request)
+        failed_claim = await restarted_repository.claim(
+            conversation_id,
+            retry_request,
+            retry_fingerprint,
+            now + timedelta(seconds=4),
+            now + timedelta(seconds=64),
+        )
+        transient_failure = AgentTurnResult(
+            run_id=retry_request.run_id,
+            status=AgentTurnStatus.FAILED,
+            text="",
+            canonical_knowledge_citations=[],
+            supplemental_memory_citations=[],
+            decisions=[],
+            usage=AgentUsage(source=UsageSource.SYNTHETIC),
+            failures=[AgentFailure(code="temporary", message="Retry.", retriable=True)],
+        )
+        await restarted_repository.complete(
+            failed_claim, transient_failure, now + timedelta(seconds=5)
+        )
+        failed_replay = await restarted_repository.claim(
+            conversation_id,
+            retry_request,
+            retry_fingerprint,
+            now + timedelta(seconds=6),
+            now + timedelta(seconds=66),
+        )
+        assert failed_replay.replay_result == transient_failure
+        retry_claim = await restarted_repository.claim(
+            conversation_id,
+            retry_request,
+            retry_fingerprint,
+            now + timedelta(seconds=7),
+            now + timedelta(seconds=67),
+            retry_retriable_failure=True,
+        )
+        assert retry_claim.replay_result is None
+        await restarted_repository.complete(
+            retry_claim,
+            _result(retry_request, "Transient failure recovered"),
+            now + timedelta(seconds=8),
+        )
 
         await restarted_database["conversation_turns"].delete_many(
             {"conversation_id": conversation_id}

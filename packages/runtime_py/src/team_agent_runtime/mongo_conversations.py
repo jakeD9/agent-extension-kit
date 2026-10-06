@@ -163,6 +163,8 @@ class MongoConversationRepository:
         request_fingerprint: str,
         now: datetime,
         expires_at: datetime,
+        *,
+        retry_retriable_failure: bool = False,
     ) -> ConversationClaim:
         turns = self._database["conversation_turns"]
         turn_id = f"{conversation_id}:{request.run_id}"
@@ -182,15 +184,21 @@ class MongoConversationRepository:
                     AgentTurnStatus.COMPLETED.value,
                     AgentTurnStatus.FAILED.value,
                 }:
-                    await self._release_replayed_claim(existing_turn, now, active_session)
-                    return ConversationClaim(
-                        conversation_id=conversation_id,
-                        run_id=request.run_id,
-                        generation=int(existing_turn["claim_generation"]),
-                        request_fingerprint=request_fingerprint,
-                        context=_context_from({"summary": ""}, []),
-                        replay_result=AgentTurnResult.model_validate(existing_turn["result"]),
-                    )
+                    stored_result = AgentTurnResult.model_validate(existing_turn["result"])
+                    if (
+                        stored_result.status == AgentTurnStatus.COMPLETED
+                        or not retry_retriable_failure
+                        or not all(failure.retriable for failure in stored_result.failures)
+                    ):
+                        await self._release_replayed_claim(existing_turn, now, active_session)
+                        return ConversationClaim(
+                            conversation_id=conversation_id,
+                            run_id=request.run_id,
+                            generation=int(existing_turn["claim_generation"]),
+                            request_fingerprint=request_fingerprint,
+                            context=_context_from({"summary": ""}, []),
+                            replay_result=stored_result,
+                        )
 
             await conversations.update_one(
                 {"_id": conversation_id},
@@ -284,18 +292,18 @@ class MongoConversationRepository:
                             "schema_version": "1",
                             "conversation_id": conversation_id,
                             "run_id": request.run_id,
-                            "sequence": generation,
                             "project": request.project,
                             "request_fingerprint": request_fingerprint,
                             "request": stored_request,
-                            "result": None,
                             "created_at": now,
-                            "completed_at": None,
                         },
                         "$set": {
+                            "sequence": generation,
                             "claim_generation": generation,
                             "claim_expires_at": expires_at,
                             "status": "active",
+                            "result": None,
+                            "completed_at": None,
                         },
                     },
                     upsert=True,

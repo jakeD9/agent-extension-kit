@@ -1,5 +1,7 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from typing import Any
 
 import pytest
@@ -16,8 +18,15 @@ from team_agent_runtime import (
     InMemoryCodingJobRepository,
     MockCodingExecutor,
     MockCodingHarness,
+    MockPublicationOutcome,
+    RunRecord,
+    RunStatus,
     StaleCodingJobClaimError,
+    coding_job_completion_fingerprint,
+    coding_job_request_fingerprint,
+    coding_job_result_fingerprint,
 )
+from team_agent_runtime.jobs import mock_publication_outcome
 
 
 def _lock(project: str = "platform", revision: str = "content-abc") -> SkillLock:
@@ -110,6 +119,69 @@ def test_contracts_are_strict_snake_case_and_pin_project_revisions() -> None:
             CodingJobResult.model_validate(
                 {**_result().model_dump(mode="json"), "changed_paths": [unsafe_path]}
             )
+
+
+@pytest.mark.parametrize(
+    "partial_identity", [{"completion_job_id": "job-1"}, {"completion_attempt": 1}]
+)
+def test_waiting_run_rejects_partial_completion_identity(
+    partial_identity: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="waiting runs"):
+        RunRecord(
+            run_id="run-1",
+            project="platform",
+            conversation_id="conversation-1",
+            source_turn_id="turn-1",
+            status=RunStatus.WAITING_FOR_JOBS,
+            claim_generation=0,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            **partial_identity,
+        )
+
+
+def test_empty_planning_citations_preserve_the_s11_request_fingerprint() -> None:
+    request = _request()
+    legacy_payload = request.model_dump(mode="json")
+    del legacy_payload["planning_citations"]
+    legacy = (
+        "sha256:"
+        + sha256(
+            json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+    assert coding_job_request_fingerprint(request) == legacy
+    assert (
+        coding_job_request_fingerprint(
+            request.model_copy(
+                update={
+                    "planning_citations": [
+                        Citation(
+                            repository="team/knowledge",
+                            path="adr/worker.md",
+                            revision="content-abc",
+                        )
+                    ]
+                }
+            )
+        )
+        != legacy
+    )
+
+
+def test_empty_reusable_lesson_preserves_the_s11_result_fingerprint() -> None:
+    result = _result()
+    legacy_payload = result.model_dump(mode="json")
+    del legacy_payload["reusable_lesson"]
+    legacy = (
+        "sha256:"
+        + sha256(
+            json.dumps(legacy_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+
+    assert coding_job_result_fingerprint(result) == legacy
 
 
 def test_submission_is_idempotent_by_project_key_and_allows_many_jobs_per_run() -> None:
@@ -217,6 +289,86 @@ def test_completion_is_idempotent_only_for_the_same_attempt_and_result() -> None
             await repository.complete(
                 claim, _result(summary="A contradictory result"), now + timedelta(seconds=2)
             )
+
+    asyncio.run(check())
+
+
+def test_consumption_rejects_state_fingerprint_and_publication_not_derived_from_job() -> None:
+    async def check() -> None:
+        repository = InMemoryCodingJobRepository()
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        await repository.submit(_request(), now)
+        job_claim = await repository.claim("worker", now, now + timedelta(seconds=10))
+        assert job_claim is not None
+        await repository.complete(job_claim, _result(), now + timedelta(seconds=1))
+        claim = await repository.claim_terminal_run(
+            now + timedelta(seconds=2), now + timedelta(seconds=30)
+        )
+        assert claim is not None
+        fingerprint = coding_job_completion_fingerprint(claim.job)
+        publication = mock_publication_outcome(claim.job)
+
+        with pytest.raises(CodingJobConflictError, match="status"):
+            await repository.finish_consumption(
+                claim,
+                status=RunStatus.NEEDS_INPUT,
+                resume_turn_id="resume-1",
+                completion_fingerprint=fingerprint,
+                publication_outcome=publication,
+                memory_id=None,
+                now=now + timedelta(seconds=3),
+            )
+        with pytest.raises(CodingJobConflictError, match="fingerprint"):
+            await repository.finish_consumption(
+                claim,
+                status=RunStatus.COMPLETED,
+                resume_turn_id="resume-1",
+                completion_fingerprint="sha256:bogus",
+                publication_outcome=publication,
+                memory_id=None,
+                now=now + timedelta(seconds=3),
+            )
+        with pytest.raises(CodingJobConflictError, match="publication"):
+            await repository.finish_consumption(
+                claim,
+                status=RunStatus.COMPLETED,
+                resume_turn_id="resume-1",
+                completion_fingerprint=fingerprint,
+                publication_outcome=MockPublicationOutcome(
+                    status="not_created",
+                    reason="wrong",
+                    repository_revision="commit-123",
+                ),
+                memory_id=None,
+                now=now + timedelta(seconds=3),
+            )
+
+    asyncio.run(check())
+
+
+def test_s12_consumer_skips_multi_job_run_and_claims_later_single_job() -> None:
+    async def check() -> None:
+        repository = InMemoryCodingJobRepository()
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        await repository.submit(_request(), now)
+        await repository.submit(_request("job-2", run_id="run-1", key="submit-2"), now)
+        for job_id in ("job-1", "job-2"):
+            claim = await repository.claim("worker", now, now + timedelta(seconds=10))
+            assert claim is not None and claim.job_id == job_id
+            await repository.complete(claim, _result(job_id), now + timedelta(seconds=1))
+
+        valid_request = _request("job-valid", run_id="run-valid", key="submit-valid")
+        await repository.submit(valid_request, now + timedelta(seconds=2))
+        valid_claim = await repository.claim(
+            "worker", now + timedelta(seconds=2), now + timedelta(seconds=10)
+        )
+        assert valid_claim is not None and valid_claim.job_id == "job-valid"
+        await repository.complete(valid_claim, _result("job-valid"), now + timedelta(seconds=3))
+
+        claimed = await repository.claim_terminal_run(
+            now + timedelta(seconds=4), now + timedelta(seconds=30)
+        )
+        assert claimed is not None and claimed.job.job_id == "job-valid"
 
     asyncio.run(check())
 
@@ -393,6 +545,7 @@ class _MigrationCollection:
     def __init__(self) -> None:
         self.indexes: list[tuple[list[tuple[str, int]], str, bool]] = []
         self.upserts: list[tuple[dict[str, object], dict[str, object]]] = []
+        self.updates: list[tuple[dict[str, object], dict[str, object]]] = []
 
     async def create_index(
         self, keys: list[tuple[str, int]], *, name: str, unique: bool = False
@@ -405,6 +558,10 @@ class _MigrationCollection:
     ) -> object:
         assert upsert
         self.upserts.append((query, update))
+        return object()
+
+    async def update_many(self, query: dict[str, object], update: dict[str, object]) -> object:
+        self.updates.append((query, update))
         return object()
 
 
@@ -451,7 +608,9 @@ def test_mongo_migration_has_strict_snake_case_state_and_nonunique_run_lookup() 
         assert "submission_idempotency_key" in properties
         assert "lease_expires_at" in properties
         assert "outcome" in properties
+        assert "consumed_at" in properties
         assert "oneOf" in schema
+        assert "claim_generation" in database.validators["runs"]["$jsonSchema"]["properties"]
         assert not any(any(character.isupper() for character in key) for key in properties)
         indexes = database["coding_jobs"].indexes
         assert (
@@ -461,5 +620,31 @@ def test_mongo_migration_has_strict_snake_case_state_and_nonunique_run_lookup() 
         ) in indexes
         assert ([("run_id", 1), ("created_at", 1)], "run_created", False) in indexes
         assert database["schema_migrations"].upserts[0][0] == {"_id": "runtime-jobs-schema-v1"}
+        assert database["schema_migrations"].upserts[1][0] == {"_id": "runtime-jobs-schema-v2"}
+
+    asyncio.run(check())
+
+
+def test_mongo_v2_migration_relaxes_backfills_then_reinstalls_strict_validators() -> None:
+    from team_agent_runtime.mongo_jobs import MongoCodingJobRepository
+
+    async def check() -> None:
+        database = _MigrationDatabase()
+        database.collections = {
+            "runs": _MigrationCollection(),
+            "coding_jobs": _MigrationCollection(),
+            "schema_migrations": _MigrationCollection(),
+        }
+        repository = MongoCodingJobRepository(database)  # type: ignore[arg-type]
+        await repository.migrate(datetime(2026, 1, 1, tzinfo=UTC))
+
+        run_update = database["runs"].updates[0]
+        job_update = database["coding_jobs"].updates[0]
+        assert run_update[0] == {"schema_version": "1"}
+        assert run_update[1]["$set"]["schema_version"] == "2"  # type: ignore[index]
+        assert job_update[1]["$set"]["consumed_at"] is None  # type: ignore[index]
+        assert database.validators["runs"]["$jsonSchema"]["properties"]["schema_version"] == {
+            "enum": ["2"]
+        }
 
     asyncio.run(check())

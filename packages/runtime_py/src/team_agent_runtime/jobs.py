@@ -14,7 +14,7 @@ from pathlib import PurePosixPath
 from typing import Any, Literal, Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from team_agent_contracts import SkillLock
+from team_agent_contracts import Citation, SkillLock
 
 Document = dict[str, Any]
 DEFAULT_JOB_LEASE_TTL = timedelta(seconds=60)
@@ -28,6 +28,12 @@ class _Contract(BaseModel):
 
 class RunStatus(StrEnum):
     WAITING_FOR_JOBS = "waiting_for_jobs"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    CANCELLED = "cancelled"
+    NEEDS_INPUT = "needs_input"
 
 
 class CodingJobStatus(StrEnum):
@@ -63,6 +69,7 @@ class CodingJobRequest(_Contract):
     harness: Literal["mock"] = "mock"
     content_revision: str = Field(min_length=1, max_length=256)
     selected_skill_lock: SkillLock
+    planning_citations: list[Citation] = Field(default_factory=list, max_length=20)
     deadline_at: AwareDatetime
 
     @model_validator(mode="after")
@@ -76,6 +83,11 @@ class CodingJobRequest(_Contract):
         return self
 
 
+class ReusableLesson(_Contract):
+    title: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1, max_length=20_000)
+
+
 class CodingJobResult(_Contract):
     schema_version: Literal["1"] = "1"
     job_id: str = Field(min_length=1, max_length=160)
@@ -83,6 +95,7 @@ class CodingJobResult(_Contract):
     summary: str = Field(min_length=1, max_length=20_000)
     changed_paths: list[str] = Field(default_factory=list, max_length=2_000)
     checks: list[str] = Field(default_factory=list, max_length=2_000)
+    reusable_lesson: ReusableLesson | None = None
 
     @model_validator(mode="after")
     def unique_bounded_paths_and_checks(self) -> CodingJobResult:
@@ -109,19 +122,67 @@ class CodingJobInputRequest(_Contract):
     question: str = Field(min_length=1, max_length=2_000)
 
 
+class MockPublicationOutcome(_Contract):
+    status: Literal["draft_created", "not_created"]
+    reference: str | None = Field(default=None, max_length=500)
+    reason: str | None = Field(default=None, max_length=500)
+    repository_revision: str = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def reference_matches_status(self) -> MockPublicationOutcome:
+        if (self.status == "draft_created") != (self.reference is not None):
+            raise ValueError("only a created mock draft requires a reference")
+        if (self.status == "not_created") != (self.reason is not None):
+            raise ValueError("only a non-created mock draft requires a reason")
+        return self
+
+
 class RunRecord(_Contract):
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     run_id: str
     project: str
     conversation_id: str
     source_turn_id: str
     status: RunStatus
+    claim_generation: int = Field(ge=0)
+    claim_expires_at: AwareDatetime | None = None
+    completion_job_id: str | None = None
+    completion_attempt: int | None = Field(default=None, ge=0)
+    completion_fingerprint: str | None = None
+    resume_turn_id: str | None = None
+    memory_id: str | None = None
+    publication_outcome: MockPublicationOutcome | None = None
     created_at: AwareDatetime
     updated_at: AwareDatetime
 
+    @model_validator(mode="after")
+    def state_is_consistent(self) -> RunRecord:
+        if self.status == RunStatus.RUNNING:
+            if self.claim_generation < 1 or self.claim_expires_at is None:
+                raise ValueError("running runs require a live claim")
+        elif self.claim_expires_at is not None:
+            raise ValueError("only running runs may retain a claim")
+        terminal = self.status not in {RunStatus.WAITING_FOR_JOBS, RunStatus.RUNNING}
+        has_completion_identity = (
+            self.completion_job_id is not None and self.completion_attempt is not None
+        )
+        if self.status == RunStatus.WAITING_FOR_JOBS and (
+            self.completion_job_id is not None or self.completion_attempt is not None
+        ):
+            raise ValueError("waiting runs cannot retain a completion identity")
+        if self.status != RunStatus.WAITING_FOR_JOBS and not has_completion_identity:
+            raise ValueError("claimed and terminal runs require a completion identity")
+        if terminal != (self.resume_turn_id is not None):
+            raise ValueError("terminal runs require a resume turn")
+        if terminal != (self.completion_fingerprint is not None):
+            raise ValueError("terminal runs require a completion fingerprint")
+        if terminal != (self.publication_outcome is not None):
+            raise ValueError("terminal runs require a publication outcome")
+        return self
+
 
 class CodingJobRecord(_Contract):
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     job_id: str
     run_id: str
     project: str
@@ -143,6 +204,8 @@ class CodingJobRecord(_Contract):
     updated_at: AwareDatetime
     started_at: AwareDatetime | None = None
     completed_at: AwareDatetime | None = None
+    consumed_at: AwareDatetime | None = None
+    consumed_by_turn_id: str | None = None
 
     @model_validator(mode="after")
     def state_is_consistent(self) -> CodingJobRecord:
@@ -177,6 +240,10 @@ class CodingJobRecord(_Contract):
             raise ValueError("terminal jobs require completed_at")
         if self.status.value not in TERMINAL_JOB_STATUSES and self.completed_at is not None:
             raise ValueError("nonterminal jobs cannot have completed_at")
+        if (self.consumed_at is None) != (self.consumed_by_turn_id is None):
+            raise ValueError("consumption timestamp and turn must be stored together")
+        if self.consumed_at is not None and self.status.value not in TERMINAL_JOB_STATUSES:
+            raise ValueError("only terminal jobs may be consumed")
         return self
 
 
@@ -195,12 +262,24 @@ class CodingJobClaim:
     lease_expires_at: datetime
 
 
+@dataclass(frozen=True)
+class RunConsumptionClaim:
+    run_id: str
+    job: CodingJobRecord
+    generation: int
+    expires_at: datetime
+
+
 class CodingJobConflictError(RuntimeError):
     """An idempotency identity was reused with different content."""
 
 
 class StaleCodingJobClaimError(RuntimeError):
     """A worker tried to mutate a job after losing its fenced attempt."""
+
+
+class StaleRunConsumptionClaimError(RuntimeError):
+    """A completion consumer tried to finalize a superseded run claim."""
 
 
 class CodingJobNotFoundError(RuntimeError):
@@ -236,6 +315,22 @@ class CodingJobRepository(Protocol):
 
     async def read(self, job_id: str) -> CodingRunSnapshot | None: ...
 
+    async def claim_terminal_run(
+        self, now: datetime, expires_at: datetime, *, limit: int = 100
+    ) -> RunConsumptionClaim | None: ...
+
+    async def finish_consumption(
+        self,
+        claim: RunConsumptionClaim,
+        *,
+        status: RunStatus,
+        resume_turn_id: str,
+        completion_fingerprint: str,
+        publication_outcome: MockPublicationOutcome,
+        memory_id: str | None,
+        now: datetime,
+    ) -> CodingRunSnapshot: ...
+
 
 class CodingHarness(Protocol):
     async def execute(self, request: CodingJobRequest) -> object: ...
@@ -243,15 +338,75 @@ class CodingHarness(Protocol):
 
 def coding_job_request_fingerprint(request: CodingJobRequest) -> str:
     payload = request.model_dump(mode="json")
+    # Preserve S11/v1 fingerprint identity for requests created before this optional field existed.
+    if not payload["planning_citations"]:
+        del payload["planning_citations"]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return f"sha256:{sha256(encoded).hexdigest()}"
 
 
 def coding_job_result_fingerprint(result: CodingJobResult) -> str:
-    encoded = json.dumps(
-        result.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-    ).encode()
+    payload = result.model_dump(mode="json")
+    # Preserve S11/v1 completion replay for results created before lessons existed.
+    if payload["reusable_lesson"] is None:
+        del payload["reusable_lesson"]
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+def coding_job_completion_fingerprint(job: CodingJobRecord) -> str:
+    if job.status.value not in TERMINAL_JOB_STATUSES:
+        raise ValueError("only terminal jobs have completion identities")
+    payload = {
+        "job_id": job.job_id,
+        "attempt": job.attempt,
+        "status": job.status.value,
+        "outcome": job.outcome.value if job.outcome is not None else None,
+        "result": job.result.model_dump(mode="json") if job.result is not None else None,
+        "failure": job.failure.model_dump(mode="json") if job.failure is not None else None,
+        "input_request": (
+            job.input_request.model_dump(mode="json") if job.input_request is not None else None
+        ),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+def mock_publication_outcome(job: CodingJobRecord) -> MockPublicationOutcome:
+    if job.status == CodingJobStatus.COMPLETED and job.outcome == CodingJobOutcome.FIXED:
+        return MockPublicationOutcome(
+            status="draft_created",
+            reference=f"mock://draft-pr/{job.job_id}",
+            repository_revision=job.request.repository_revision,
+        )
+    reason = (
+        job.outcome.value
+        if job.status == CodingJobStatus.COMPLETED and job.outcome is not None
+        else job.status.value
+    )
+    return MockPublicationOutcome(
+        status="not_created",
+        reason=reason,
+        repository_revision=job.request.repository_revision,
+    )
+
+
+def completion_run_status(job: CodingJobRecord) -> RunStatus:
+    return RunStatus(job.status.value)
+
+
+def _validate_consumption_result(
+    claim: RunConsumptionClaim,
+    status: RunStatus,
+    completion_fingerprint: str,
+    publication_outcome: MockPublicationOutcome,
+) -> None:
+    if status != completion_run_status(claim.job):
+        raise CodingJobConflictError("run status does not match the claimed job")
+    if completion_fingerprint != coding_job_completion_fingerprint(claim.job):
+        raise CodingJobConflictError("completion fingerprint does not match the claimed job")
+    if publication_outcome != mock_publication_outcome(claim.job):
+        raise CodingJobConflictError("publication outcome does not match the claimed job")
 
 
 def _document_size(document: Mapping[str, object]) -> int:
@@ -267,11 +422,19 @@ def _run_document(request: CodingJobRequest, fingerprint: str, now: datetime) ->
     del fingerprint
     return {
         "_id": request.run_id,
-        "schema_version": "1",
+        "schema_version": "2",
         "project": request.project,
         "conversation_id": request.conversation_id,
         "source_turn_id": request.source_turn_id,
         "status": RunStatus.WAITING_FOR_JOBS.value,
+        "claim_generation": 0,
+        "claim_expires_at": None,
+        "completion_job_id": None,
+        "completion_attempt": None,
+        "completion_fingerprint": None,
+        "resume_turn_id": None,
+        "memory_id": None,
+        "publication_outcome": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -280,7 +443,7 @@ def _run_document(request: CodingJobRequest, fingerprint: str, now: datetime) ->
 def _job_document(request: CodingJobRequest, fingerprint: str, now: datetime) -> Document:
     return {
         "_id": request.job_id,
-        "schema_version": "1",
+        "schema_version": "2",
         "run_id": request.run_id,
         "project": request.project,
         "submission_idempotency_key": request.submission_idempotency_key,
@@ -301,6 +464,8 @@ def _job_document(request: CodingJobRequest, fingerprint: str, now: datetime) ->
         "updated_at": now,
         "started_at": None,
         "completed_at": None,
+        "consumed_at": None,
+        "consumed_by_turn_id": None,
     }
 
 
@@ -524,6 +689,106 @@ class InMemoryCodingJobRepository:
                 return None
             return _snapshot(self._runs[str(job["run_id"])], job)
 
+    async def claim_terminal_run(
+        self, now: datetime, expires_at: datetime, *, limit: int = 100
+    ) -> RunConsumptionClaim | None:
+        _validate_consumption_window(now, expires_at, limit)
+        async with self._mutex:
+            candidates = sorted(
+                (
+                    job
+                    for job in self._jobs.values()
+                    if job["status"] in TERMINAL_JOB_STATUSES
+                    and job["consumed_at"] is None
+                    and (
+                        self._runs[str(job["run_id"])]["status"] == RunStatus.WAITING_FOR_JOBS.value
+                        or (
+                            self._runs[str(job["run_id"])]["status"] == RunStatus.RUNNING.value
+                            and self._runs[str(job["run_id"])]["claim_expires_at"] <= now
+                        )
+                    )
+                ),
+                key=lambda job: (job["completed_at"], job["_id"]),
+            )[:limit]
+            for job in candidates:
+                run = self._runs[str(job["run_id"])]
+                if sum(1 for item in self._jobs.values() if item["run_id"] == run["_id"]) != 1:
+                    continue
+                run.update(
+                    {
+                        "status": RunStatus.RUNNING.value,
+                        "claim_generation": int(run["claim_generation"]) + 1,
+                        "claim_expires_at": expires_at,
+                        "completion_job_id": job["_id"],
+                        "completion_attempt": job["attempt"],
+                        "updated_at": now,
+                    }
+                )
+                return RunConsumptionClaim(
+                    run_id=str(run["_id"]),
+                    job=_job_model(job),
+                    generation=int(run["claim_generation"]),
+                    expires_at=expires_at,
+                )
+            return None
+
+    async def finish_consumption(
+        self,
+        claim: RunConsumptionClaim,
+        *,
+        status: RunStatus,
+        resume_turn_id: str,
+        completion_fingerprint: str,
+        publication_outcome: MockPublicationOutcome,
+        memory_id: str | None,
+        now: datetime,
+    ) -> CodingRunSnapshot:
+        _validate_timestamp("now", now)
+        _validate_consumption_result(claim, status, completion_fingerprint, publication_outcome)
+        async with self._mutex:
+            run = self._runs.get(claim.run_id)
+            job = self._jobs.get(claim.job.job_id)
+            if run is None or job is None:
+                raise CodingJobNotFoundError(claim.job.job_id)
+            if run["status"] not in {
+                RunStatus.WAITING_FOR_JOBS.value,
+                RunStatus.RUNNING.value,
+            }:
+                if (
+                    run["status"] == status.value
+                    and run["resume_turn_id"] == resume_turn_id
+                    and run["completion_fingerprint"] == completion_fingerprint
+                    and run["publication_outcome"] == publication_outcome.model_dump(mode="json")
+                    and run["memory_id"] == memory_id
+                    and job["consumed_by_turn_id"] == resume_turn_id
+                ):
+                    return _snapshot(run, job)
+                raise StaleRunConsumptionClaimError("run completion was already consumed")
+            if (
+                run["status"] != RunStatus.RUNNING.value
+                or run["claim_generation"] != claim.generation
+                or run["claim_expires_at"] is None
+                or run["claim_expires_at"] <= now
+                or run["completion_job_id"] != job["_id"]
+                or run["completion_attempt"] != job["attempt"]
+                or job["consumed_at"] is not None
+            ):
+                raise StaleRunConsumptionClaimError("run consumption claim is stale or expired")
+            job["consumed_at"] = now
+            job["consumed_by_turn_id"] = resume_turn_id
+            run.update(
+                {
+                    "status": status.value,
+                    "claim_expires_at": None,
+                    "completion_fingerprint": completion_fingerprint,
+                    "resume_turn_id": resume_turn_id,
+                    "memory_id": memory_id,
+                    "publication_outcome": publication_outcome.model_dump(mode="json"),
+                    "updated_at": now,
+                }
+            )
+            return _snapshot(run, job)
+
     def _require_active_claim(self, claim: CodingJobClaim, now: datetime) -> Document:
         job = self._jobs.get(claim.job_id)
         if (
@@ -655,6 +920,15 @@ def _validate_lease_window(worker_id: str, now: datetime, expires_at: datetime) 
     _validate_timestamp("lease expiry", expires_at)
     if expires_at <= now:
         raise ValueError("lease expiry must be after now")
+
+
+def _validate_consumption_window(now: datetime, expires_at: datetime, limit: int) -> None:
+    _validate_timestamp("now", now)
+    _validate_timestamp("claim expiry", expires_at)
+    if expires_at <= now:
+        raise ValueError("claim expiry must be after now")
+    if limit < 1 or limit > 1_000:
+        raise ValueError("poll limit must be between 1 and 1000")
 
 
 def _validate_timestamp(name: str, value: datetime) -> None:

@@ -20,12 +20,18 @@ from team_agent_runtime.jobs import (
     CodingJobStatus,
     CodingRunSnapshot,
     Document,
+    MockPublicationOutcome,
+    RunConsumptionClaim,
+    RunStatus,
     StaleCodingJobClaimError,
+    StaleRunConsumptionClaimError,
     _assert_document_size,
     _claim_from,
     _job_document,
     _run_document,
     _snapshot,
+    _validate_consumption_result,
+    _validate_consumption_window,
     _validate_lease_window,
     _validate_timestamp,
     coding_job_request_fingerprint,
@@ -54,13 +60,39 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
             "status",
             "created_at",
             "updated_at",
+            "claim_generation",
+            "claim_expires_at",
+            "completion_job_id",
+            "completion_attempt",
+            "completion_fingerprint",
+            "resume_turn_id",
+            "memory_id",
+            "publication_outcome",
         ],
         {
-            "schema_version": {"enum": ["1"]},
+            "schema_version": {"enum": ["2"]},
             "project": {"bsonType": "string"},
             "conversation_id": {"bsonType": "string"},
             "source_turn_id": {"bsonType": "string"},
-            "status": {"enum": ["waiting_for_jobs"]},
+            "status": {
+                "enum": [
+                    "waiting_for_jobs",
+                    "running",
+                    "completed",
+                    "failed",
+                    "timed_out",
+                    "cancelled",
+                    "needs_input",
+                ]
+            },
+            "claim_generation": {"bsonType": "int", "minimum": 0},
+            "claim_expires_at": {"bsonType": ["date", "null"]},
+            "completion_job_id": {"bsonType": ["string", "null"]},
+            "completion_attempt": {"bsonType": ["int", "null"], "minimum": 0},
+            "completion_fingerprint": {"bsonType": ["string", "null"]},
+            "resume_turn_id": {"bsonType": ["string", "null"]},
+            "memory_id": {"bsonType": ["string", "null"]},
+            "publication_outcome": {"bsonType": ["object", "null"]},
             "created_at": {"bsonType": "date"},
             "updated_at": {"bsonType": "date"},
         },
@@ -88,9 +120,11 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
             "updated_at",
             "started_at",
             "completed_at",
+            "consumed_at",
+            "consumed_by_turn_id",
         ],
         {
-            "schema_version": {"enum": ["1"]},
+            "schema_version": {"enum": ["2"]},
             "run_id": {"bsonType": "string"},
             "project": {"bsonType": "string"},
             "submission_idempotency_key": {"bsonType": "string", "maxLength": 256},
@@ -141,6 +175,7 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
                     "harness": {"enum": ["mock"]},
                     "content_revision": {"bsonType": "string"},
                     "selected_skill_lock": {"bsonType": "object"},
+                    "planning_citations": {"bsonType": "array", "maxItems": 20},
                     "deadline_at": {"bsonType": "string"},
                 },
             },
@@ -158,6 +193,8 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
             "updated_at": {"bsonType": "date"},
             "started_at": {"bsonType": ["date", "null"]},
             "completed_at": {"bsonType": ["date", "null"]},
+            "consumed_at": {"bsonType": ["date", "null"]},
+            "consumed_by_turn_id": {"bsonType": ["string", "null"]},
         },
     ),
     "schema_migrations": _object_schema(
@@ -170,11 +207,51 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
 }
 
 _NULL = {"bsonType": "null"}
+JOB_COLLECTION_VALIDATORS["runs"]["$jsonSchema"]["oneOf"] = [
+    {
+        "properties": {
+            "status": {"enum": ["waiting_for_jobs"]},
+            "claim_expires_at": _NULL,
+            "completion_job_id": _NULL,
+            "completion_attempt": _NULL,
+            "completion_fingerprint": _NULL,
+            "resume_turn_id": _NULL,
+            "memory_id": _NULL,
+            "publication_outcome": _NULL,
+        }
+    },
+    {
+        "properties": {
+            "status": {"enum": ["running"]},
+            "claim_generation": {"bsonType": "int", "minimum": 1},
+            "claim_expires_at": {"bsonType": "date"},
+            "completion_job_id": {"bsonType": "string"},
+            "completion_attempt": {"bsonType": "int", "minimum": 0},
+            "completion_fingerprint": _NULL,
+            "resume_turn_id": _NULL,
+            "memory_id": _NULL,
+            "publication_outcome": _NULL,
+        }
+    },
+    {
+        "properties": {
+            "status": {"enum": ["completed", "failed", "timed_out", "cancelled", "needs_input"]},
+            "claim_generation": {"bsonType": "int", "minimum": 1},
+            "claim_expires_at": _NULL,
+            "completion_job_id": {"bsonType": "string"},
+            "completion_attempt": {"bsonType": "int", "minimum": 0},
+            "completion_fingerprint": {"bsonType": "string"},
+            "resume_turn_id": {"bsonType": "string"},
+            "publication_outcome": {"bsonType": "object"},
+        }
+    },
+]
 _TERMINAL_BASE = {
     "worker_id": _NULL,
     "lease_expires_at": _NULL,
     "completed_at": {"bsonType": "date"},
 }
+_UNCONSUMED = {"consumed_at": _NULL, "consumed_by_turn_id": _NULL}
 JOB_COLLECTION_VALIDATORS["coding_jobs"]["$jsonSchema"]["oneOf"] = [
     {
         "properties": {
@@ -187,6 +264,7 @@ JOB_COLLECTION_VALIDATORS["coding_jobs"]["$jsonSchema"]["oneOf"] = [
             "failure": _NULL,
             "input_request": _NULL,
             "completed_at": _NULL,
+            **_UNCONSUMED,
         }
     },
     {
@@ -201,6 +279,7 @@ JOB_COLLECTION_VALIDATORS["coding_jobs"]["$jsonSchema"]["oneOf"] = [
             "failure": _NULL,
             "input_request": _NULL,
             "completed_at": _NULL,
+            **_UNCONSUMED,
         }
     },
     {
@@ -248,6 +327,19 @@ JOB_COLLECTION_VALIDATORS["coding_jobs"]["$jsonSchema"]["oneOf"] = [
         }
     },
 ]
+JOB_COLLECTION_VALIDATORS["coding_jobs"]["$jsonSchema"]["allOf"] = [
+    {
+        "oneOf": [
+            {"properties": _UNCONSUMED},
+            {
+                "properties": {
+                    "consumed_at": {"bsonType": "date"},
+                    "consumed_by_turn_id": {"bsonType": "string"},
+                }
+            },
+        ]
+    }
+]
 
 
 class MongoCodingJobRepository:
@@ -268,6 +360,43 @@ class MongoCodingJobRepository:
                     validationAction="error",
                 )
             else:
+                if name in {"runs", "coding_jobs"}:
+                    await self._database.command(
+                        {
+                            "collMod": name,
+                            "validator": {"$jsonSchema": {"bsonType": "object"}},
+                            "validationLevel": "strict",
+                            "validationAction": "error",
+                        }
+                    )
+                    if name == "runs":
+                        await self._database[name].update_many(
+                            {"schema_version": "1"},
+                            {
+                                "$set": {
+                                    "schema_version": "2",
+                                    "claim_generation": 0,
+                                    "claim_expires_at": None,
+                                    "completion_job_id": None,
+                                    "completion_attempt": None,
+                                    "completion_fingerprint": None,
+                                    "resume_turn_id": None,
+                                    "memory_id": None,
+                                    "publication_outcome": None,
+                                }
+                            },
+                        )
+                    else:
+                        await self._database[name].update_many(
+                            {"schema_version": "1"},
+                            {
+                                "$set": {
+                                    "schema_version": "2",
+                                    "consumed_at": None,
+                                    "consumed_by_turn_id": None,
+                                }
+                            },
+                        )
                 await self._database.command(
                     {
                         "collMod": name,
@@ -297,9 +426,23 @@ class MongoCodingJobRepository:
             [("status", ASCENDING), ("lease_expires_at", ASCENDING)],
             name="running_lease_expiration",
         )
+        await self._database["coding_jobs"].create_index(
+            [
+                ("status", ASCENDING),
+                ("consumed_at", ASCENDING),
+                ("completed_at", ASCENDING),
+                ("_id", ASCENDING),
+            ],
+            name="terminal_unconsumed_completion",
+        )
         await self._database["schema_migrations"].update_one(
             {"_id": "runtime-jobs-schema-v1"},
             {"$setOnInsert": {"schema_version": 1, "applied_at": applied_at}},
+            upsert=True,
+        )
+        await self._database["schema_migrations"].update_one(
+            {"_id": "runtime-jobs-schema-v2"},
+            {"$setOnInsert": {"schema_version": 2, "applied_at": applied_at}},
             upsert=True,
         )
 
@@ -569,6 +712,208 @@ class MongoCodingJobRepository:
         if job is None:
             return None
         return await self._snapshot_for(job)
+
+    async def claim_terminal_run(
+        self, now: datetime, expires_at: datetime, *, limit: int = 100
+    ) -> RunConsumptionClaim | None:
+        _validate_consumption_window(now, expires_at, limit)
+        cursor = await self._database["coding_jobs"].aggregate(
+            [
+                {
+                    "$match": {
+                        "status": {
+                            "$in": [
+                                "completed",
+                                "failed",
+                                "timed_out",
+                                "cancelled",
+                                "needs_input",
+                            ]
+                        },
+                        "consumed_at": None,
+                    }
+                },
+                {"$sort": {"completed_at": 1, "_id": 1}},
+                # Bound server-side work before joining against runs. A live claim in this small
+                # page may delay later work only until its short non-renewed expiry.
+                {"$limit": limit},
+                {
+                    "$lookup": {
+                        "from": "runs",
+                        "localField": "run_id",
+                        "foreignField": "_id",
+                        "as": "eligible_run",
+                    }
+                },
+                {"$unwind": "$eligible_run"},
+                {
+                    "$match": {
+                        "$or": [
+                            {"eligible_run.status": RunStatus.WAITING_FOR_JOBS.value},
+                            {
+                                "eligible_run.status": RunStatus.RUNNING.value,
+                                "eligible_run.claim_expires_at": {"$lte": now},
+                            },
+                        ]
+                    }
+                },
+                {
+                    "$lookup": {
+                        "from": "coding_jobs",
+                        "let": {"candidate_run_id": "$run_id"},
+                        "pipeline": [
+                            {"$match": {"$expr": {"$eq": ["$run_id", "$$candidate_run_id"]}}},
+                            {"$limit": 2},
+                            {"$project": {"_id": 1}},
+                        ],
+                        "as": "run_jobs",
+                    }
+                },
+                {"$project": {"eligible_run": 0}},
+            ]
+        )
+        candidates = await cursor.to_list(length=limit)
+        for candidate in candidates:
+            if len(candidate.pop("run_jobs", [])) != 1:
+                continue
+            candidate_id = candidate["_id"]
+
+            async def operation(
+                session: Any, candidate_id: object = candidate_id
+            ) -> RunConsumptionClaim | None:
+                job = await self._database["coding_jobs"].find_one(
+                    {"_id": candidate_id, "consumed_at": None}, session=session
+                )
+                if job is None or job["status"] not in {
+                    "completed",
+                    "failed",
+                    "timed_out",
+                    "cancelled",
+                    "needs_input",
+                }:
+                    return None
+                run = await self._database["runs"].find_one_and_update(
+                    {
+                        "_id": job["run_id"],
+                        "$or": [
+                            {"status": RunStatus.WAITING_FOR_JOBS.value},
+                            {
+                                "status": RunStatus.RUNNING.value,
+                                "claim_expires_at": {"$lte": now},
+                            },
+                        ],
+                    },
+                    {
+                        "$set": {
+                            "status": RunStatus.RUNNING.value,
+                            "claim_expires_at": expires_at,
+                            "completion_job_id": job["_id"],
+                            "completion_attempt": job["attempt"],
+                            "updated_at": now,
+                        },
+                        "$inc": {"claim_generation": 1},
+                    },
+                    session=session,
+                    return_document=ReturnDocument.AFTER,
+                )
+                if run is None:
+                    return None
+                return RunConsumptionClaim(
+                    run_id=str(run["_id"]),
+                    job=_snapshot(run, job).job,
+                    generation=int(run["claim_generation"]),
+                    expires_at=expires_at,
+                )
+
+            async with self._database.client.start_session() as session:
+                claim = cast(RunConsumptionClaim | None, await session.with_transaction(operation))
+            if claim is not None:
+                return claim
+        return None
+
+    async def finish_consumption(
+        self,
+        claim: RunConsumptionClaim,
+        *,
+        status: RunStatus,
+        resume_turn_id: str,
+        completion_fingerprint: str,
+        publication_outcome: MockPublicationOutcome,
+        memory_id: str | None,
+        now: datetime,
+    ) -> CodingRunSnapshot:
+        _validate_timestamp("now", now)
+        _validate_consumption_result(claim, status, completion_fingerprint, publication_outcome)
+
+        async def operation(session: Any) -> CodingRunSnapshot:
+            run = await self._database["runs"].find_one({"_id": claim.run_id}, session=session)
+            job = await self._database["coding_jobs"].find_one(
+                {"_id": claim.job.job_id}, session=session
+            )
+            if run is None or job is None:
+                raise CodingJobNotFoundError(claim.job.job_id)
+            if run["status"] not in {
+                RunStatus.WAITING_FOR_JOBS.value,
+                RunStatus.RUNNING.value,
+            }:
+                expected_publication = publication_outcome.model_dump(mode="json")
+                if (
+                    run.get("status") == status.value
+                    and run.get("resume_turn_id") == resume_turn_id
+                    and run.get("completion_fingerprint") == completion_fingerprint
+                    and run.get("publication_outcome") == expected_publication
+                    and run.get("memory_id") == memory_id
+                    and job.get("consumed_by_turn_id") == resume_turn_id
+                ):
+                    return _snapshot(run, job)
+                raise StaleRunConsumptionClaimError("run completion was already consumed")
+            if (
+                run["status"] != RunStatus.RUNNING.value
+                or run["claim_generation"] != claim.generation
+                or run["claim_expires_at"] <= now
+                or run["completion_job_id"] != job["_id"]
+                or run["completion_attempt"] != job["attempt"]
+                or job["consumed_at"] is not None
+            ):
+                raise StaleRunConsumptionClaimError("run consumption claim is stale or expired")
+            job_result = await self._database["coding_jobs"].update_one(
+                {"_id": job["_id"], "consumed_at": None},
+                {"$set": {"consumed_at": now, "consumed_by_turn_id": resume_turn_id}},
+                session=session,
+            )
+            run_result = await self._database["runs"].update_one(
+                {
+                    "_id": claim.run_id,
+                    "status": RunStatus.RUNNING.value,
+                    "claim_generation": claim.generation,
+                },
+                {
+                    "$set": {
+                        "status": status.value,
+                        "claim_expires_at": None,
+                        "completion_fingerprint": completion_fingerprint,
+                        "resume_turn_id": resume_turn_id,
+                        "memory_id": memory_id,
+                        "publication_outcome": publication_outcome.model_dump(mode="json"),
+                        "updated_at": now,
+                    }
+                },
+                session=session,
+            )
+            if job_result.modified_count != 1 or run_result.modified_count != 1:
+                raise StaleRunConsumptionClaimError("completion consumption lost its claim")
+            stored_run = await self._database["runs"].find_one(
+                {"_id": claim.run_id}, session=session
+            )
+            stored_job = await self._database["coding_jobs"].find_one(
+                {"_id": claim.job.job_id}, session=session
+            )
+            if stored_run is None or stored_job is None:
+                raise RuntimeError("consumed completion was not readable")
+            return _snapshot(stored_run, stored_job)
+
+        async with self._database.client.start_session() as session:
+            return cast(CodingRunSnapshot, await session.with_transaction(operation))
 
     async def _terminal_claim_update(
         self,

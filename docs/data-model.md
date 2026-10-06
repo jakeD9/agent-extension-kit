@@ -177,17 +177,24 @@ conversation claim-expiry index supports operational recovery queries.
 
 ### `runs` fields
 
-S11 deliberately gives the run no lease and no copied job result. It is the durable workflow
-envelope that S12 will resume after observing a terminal coding job.
+The run is the durable workflow envelope. S12 adds a short, non-renewed consumption claim only while
+one worker projects a terminal coding-job result back into the conversation.
+The S12 consumer only claims single-job runs; multi-job runs remain available for a later explicit
+join workflow and do not block other eligible candidates in the bounded polling page.
 
 | Field | Purpose | Example |
 |---|---|---|
 | `_id` | Stable logical run ID. Multiple coding jobs may belong to one run. | `run-42` |
-| `schema_version` | Strict document-shape version. | `"1"` |
+| `schema_version` | Strict document-shape version. S12 explicitly migrates v1 records. | `"2"` |
 | `project` | Project/domain boundary shared by every child job. | `platform` |
 | `conversation_id` | Durable conversation to resume after restart. | `conversation-42` |
 | `source_turn_id` | Exact conversation turn that requested this workflow. | `turn-7` |
-| `status` | S11 persists `waiting_for_jobs`; later workflow slices add consumer-owned transitions. | `waiting_for_jobs` |
+| `status` | `waiting_for_jobs`, transient consumer-owned `running`, then the job-derived terminal state. | `completed` |
+| `claim_generation`, `claim_expires_at` | Short fenced completion-consumer claim. It has no owner, token, or heartbeat. | `3`, `null` |
+| `completion_job_id`, `completion_attempt`, `completion_fingerprint` | Immutable terminal job identity consumed by this run. | `job-42`, `1`, `sha256:4cab...` |
+| `resume_turn_id` | Deterministic conversation turn used for effectively-once visible replay. | `resume-91ab...` |
+| `memory_id` | Optional idempotently-created supplemental lesson. | `memory-9` |
+| `publication_outcome` | Deterministic mock draft-PR result; it performs no Git action. | `{"status":"draft_created","reference":"mock://draft-pr/job-42"}` |
 | `created_at`, `updated_at` | Creation and last workflow-envelope mutation times. Job progress does not rewrite the run in S11. | `2026-10-05T16:00:00Z` |
 
 ### `coding_jobs` fields
@@ -195,7 +202,7 @@ envelope that S12 will resume after observing a terminal coding job.
 | Field | Purpose | Example |
 |---|---|---|
 | `_id` | Stable caller-supplied job ID used for status, cancellation, and external-resource labels. | `job-42` |
-| `schema_version` | Strict document-shape version. | `"1"` |
+| `schema_version` | Strict document-shape version. S12 explicitly migrates v1 records. | `"2"` |
 | `run_id` | Parent workflow run. It is non-unique because later workflows may submit several jobs. | `run-42` |
 | `project` | Project/domain boundary duplicated for indexed idempotency and diagnostics. | `platform` |
 | `submission_idempotency_key` | Caller retry identity. `(project, submission_idempotency_key)` is unique. | `event-7:fix` |
@@ -215,19 +222,23 @@ envelope that S12 will resume after observing a terminal coding job.
 | `created_at`, `updated_at` | Creation and latest state-mutation times. | `2026-10-05T16:00:00Z` |
 | `started_at` | Start of the current fenced attempt; it changes on reclaim. | `2026-10-05T16:10:00Z` |
 | `completed_at` | Terminal persistence time, or `null` while queued/running. | `2026-10-05T16:12:00Z` |
+| `consumed_at`, `consumed_by_turn_id` | Set together when the final transaction records that one conversation turn projected this terminal result. | `2026-10-05T16:13:00Z`, `resume-91ab...` |
 
 Abbreviated completed records:
 
 ```json
 {
   "run": {
-    "_id": "run-42", "schema_version": "1", "project": "platform",
+    "_id": "run-42", "schema_version": "2", "project": "platform",
     "conversation_id": "conversation-42", "source_turn_id": "turn-7",
-    "status": "waiting_for_jobs", "created_at": "2026-10-05T16:00:00Z",
-    "updated_at": "2026-10-05T16:00:00Z"
+    "status": "completed", "claim_generation": 1, "claim_expires_at": null,
+    "completion_job_id": "job-42", "completion_attempt": 1,
+    "completion_fingerprint": "sha256:4cab...", "resume_turn_id": "resume-91ab...",
+    "memory_id": null, "publication_outcome": {"status": "draft_created", "reference": "mock://draft-pr/job-42", "repository_revision": "commit-123"},
+    "created_at": "2026-10-05T16:00:00Z", "updated_at": "2026-10-05T16:13:00Z"
   },
   "coding_job": {
-    "_id": "job-42", "schema_version": "1", "run_id": "run-42", "project": "platform",
+    "_id": "job-42", "schema_version": "2", "run_id": "run-42", "project": "platform",
     "submission_idempotency_key": "event-7:fix", "status": "completed",
     "request_fingerprint": "sha256:8d0f...",
     "request": {
@@ -246,7 +257,8 @@ Abbreviated completed records:
     "outcome": "fixed", "result_fingerprint": "sha256:19ac...",
     "failure": null, "input_request": null,
     "created_at": "2026-10-05T16:00:00Z", "updated_at": "2026-10-05T16:12:00Z",
-    "started_at": "2026-10-05T16:10:00Z", "completed_at": "2026-10-05T16:12:00Z"
+    "started_at": "2026-10-05T16:10:00Z", "completed_at": "2026-10-05T16:12:00Z",
+    "consumed_at": "2026-10-05T16:13:00Z", "consumed_by_turn_id": "resume-91ab..."
   }
 }
 ```
@@ -273,6 +285,10 @@ Pydantic model and old records are never silently reinterpreted.
 
 S11 additionally records `runtime-jobs-schema-v1`. The distinct marker prevents the existing S10
 runtime migration from falsely implying that job validators and indexes exist.
+
+S12 records `runtime-jobs-schema-v2`. It temporarily relaxes the two job validators, backfills the
+new snake_case fields on v1 documents, advances their document versions, and only then reinstalls
+the strict v2 validators and terminal-unconsumed polling index.
 
 ## Shared requirements
 

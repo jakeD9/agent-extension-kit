@@ -5,8 +5,10 @@ from team_agent_runtime_genkit.coordinator import (
     GenkitCoordinatorRuntime,
     OpenAIResponsesModelFactory,
 )
+from team_agent_runtime_genkit.workflow_adapters import ContextSupplementalMemoryWriter
 
 __all__ = [
+    "ContextSupplementalMemoryWriter",
     "DeterministicCoordinatorModelFactory",
     "GenkitCoordinatorRuntime",
     "OpenAIResponsesModelFactory",

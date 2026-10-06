@@ -79,6 +79,12 @@ async def run_cli(
         request = AgentTurnRequest.model_validate_json(payload)
     except ValidationError:
         return _error(stderr, "invalid_request", "Request JSON is invalid.")
+    if request.conversation_context is not None or request.job_completion_context is not None:
+        return _error(
+            stderr,
+            "invalid_request",
+            "Durable conversation and job context cannot be supplied to the stateless CLI.",
+        )
     try:
         runtime = runtime_factory()
     except CoordinatorConfigurationError:

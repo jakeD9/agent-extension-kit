@@ -1,9 +1,9 @@
 # Workstream Status
 
-- Current slice: S12 — mock diagnose-and-fix workflow
-- State: S11 durable mock coding jobs implemented, independently reviewed, and verified; S12 requires
+- Current slice: S13 — supervised Codex execution
+- State: S12 mock diagnose-and-fix workflow implemented and deterministically verified; S13 requires
   its pre-slice technical check-in before implementation
-- Completed dependencies: S01, S02, S03, S04, S05, S06, S07, S08, S09, S10, S11
+- Completed dependencies: S01, S02, S03, S04, S05, S06, S07, S08, S09, S10, S11, S12
 - Verified capabilities: strict MongoDB context migrations, pinned revision synchronization,
   project/domain-admitted bounded candidate retrieval with atomic active-revision projection,
   restart-persistent cited REST search, Git/filesystem-backed skill discovery/loading without Mongo
@@ -20,13 +20,15 @@
   recovery, and no Genkit `SessionStore`, plus minimal durable runs and mock coding jobs with pinned
   repository/content/skill inputs, transactional idempotent submission, renewable job-only leases,
   attempt fencing, separate lifecycle/outcome, bounded reconciliation, restart recovery, and a
-  supervisor-owned structured completion boundary without an outbox
+  supervisor-owned structured completion boundary without an outbox, plus an application-owned mock
+  diagnose-and-fix workflow with cited pinned submission, bounded
+  terminal polling, short fenced run claims, deterministic completion/resume identities,
+  effectively-once visible conversation projection, idempotent supplemental lessons, deterministic
+  mock publication outcomes, and transactional consumption under an explicit jobs schema v2
 - Known blockers: none
-- Next eligible slice: S12. Before work starts, agree on how the coordinator submits one pinned mock
-  fix job, persists suspension, polls and idempotently consumes its terminal record, resumes through
-  the existing per-conversation serialization path, handles `needs_input`, and records one mock
-  draft-PR outcome. Keep Docker, real harness execution, publication, Slack, and generalized workflow
-  frameworks out of this slice.
+- Next eligible slice: S13. Before work starts, agree on how the persistent executor creates,
+  observes, validates, and reconciles a disposable Codex environment while keeping Mongo and
+  publication credentials outside the runner.
 - Delivery tracks: core v1 is S09–S16, S20, S23, S24, and the final structural cleanup S25.
   S17–S19, S21, and S22 are optional expansion work and do not gate core hardening or adoption
   documentation.
@@ -36,5 +38,5 @@
 - Required Git-to-Mongo CI contract: `docs/required-ci-implementations.md`
 - Genkit development skill: `.agents/skills/developing-genkit-python/SKILL.md`
 
-Read the S01 through S11 `SUMMARY.md` files before the S12 technical check-in, including every
+Read the S01 through S12 `SUMMARY.md` files before the S13 technical check-in, including every
 supersession notice and the replacement S08 verification evidence.

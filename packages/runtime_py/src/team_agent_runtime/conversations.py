@@ -61,6 +61,8 @@ class ConversationRepository(Protocol):
         request_fingerprint: str,
         now: datetime,
         expires_at: datetime,
+        *,
+        retry_retriable_failure: bool = False,
     ) -> ConversationClaim: ...
 
     async def complete(
@@ -147,6 +149,8 @@ class InMemoryConversationRepository:
         request_fingerprint: str,
         now: datetime,
         expires_at: datetime,
+        *,
+        retry_retriable_failure: bool = False,
     ) -> ConversationClaim:
         async with self._mutex:
             key = (conversation_id, request.run_id)
@@ -160,14 +164,20 @@ class InMemoryConversationRepository:
                     AgentTurnStatus.COMPLETED.value,
                     AgentTurnStatus.FAILED.value,
                 }:
-                    return ConversationClaim(
-                        conversation_id=conversation_id,
-                        run_id=request.run_id,
-                        generation=int(existing_turn["claim_generation"]),
-                        request_fingerprint=request_fingerprint,
-                        context=ConversationContext(),
-                        replay_result=AgentTurnResult.model_validate(existing_turn["result"]),
-                    )
+                    stored_result = AgentTurnResult.model_validate(existing_turn["result"])
+                    if (
+                        stored_result.status == AgentTurnStatus.COMPLETED
+                        or not retry_retriable_failure
+                        or not all(failure.retriable for failure in stored_result.failures)
+                    ):
+                        return ConversationClaim(
+                            conversation_id=conversation_id,
+                            run_id=request.run_id,
+                            generation=int(existing_turn["claim_generation"]),
+                            request_fingerprint=request_fingerprint,
+                            context=ConversationContext(),
+                            replay_result=stored_result,
+                        )
 
             conversation = self._conversations.setdefault(
                 conversation_id,
@@ -242,9 +252,12 @@ class InMemoryConversationRepository:
             }
             turn.update(
                 {
+                    "sequence": generation,
                     "claim_generation": generation,
                     "claim_expires_at": expires_at,
                     "status": "active",
+                    "result": None,
+                    "completed_at": None,
                 }
             )
             self._turns[key] = turn
@@ -340,7 +353,13 @@ class DurableConversationRuntime:
         self._claim_ttl = claim_ttl
         self._locks: dict[str, asyncio.Lock] = {}
 
-    async def execute(self, conversation_id: str, request: AgentTurnRequest) -> AgentTurnResult:
+    async def execute(
+        self,
+        conversation_id: str,
+        request: AgentTurnRequest,
+        *,
+        retry_retriable_failure: bool = False,
+    ) -> AgentTurnResult:
         if request.conversation_context is not None:
             raise ConversationRequestConflictError(
                 "conversation_context is supplied by the durable runtime"
@@ -355,6 +374,7 @@ class DurableConversationRuntime:
                 fingerprint,
                 now,
                 now + self._claim_ttl,
+                retry_retriable_failure=retry_retriable_failure,
             )
             if claim.replay_result is not None:
                 return claim.replay_result

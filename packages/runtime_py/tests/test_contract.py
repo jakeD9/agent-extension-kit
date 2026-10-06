@@ -18,6 +18,7 @@ def test_turn_request_is_narrow_strict_and_snake_case() -> None:
         "objective": "Use the selected procedure and cite the answer.",
         "skill_names": ["incident-guide"],
         "conversation_context": None,
+        "job_completion_context": None,
     }
     with pytest.raises(ValidationError):
         AgentTurnRequest(

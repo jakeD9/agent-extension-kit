@@ -15,7 +15,10 @@ from team_agent_runtime import (
     CodingJobRequest,
     CodingJobResult,
     CodingJobStatus,
+    MockPublicationOutcome,
+    RunStatus,
     StaleCodingJobClaimError,
+    coding_job_completion_fingerprint,
 )
 from team_agent_runtime.mongo_jobs import MongoCodingJobRepository
 
@@ -117,6 +120,26 @@ def test_runtime_job_transactions_fencing_and_restart() -> None:
         assert duplicate.job.status == CodingJobStatus.COMPLETED
         assert duplicate.job.outcome == CodingJobOutcome.FIXED
         assert duplicate.run.status.value == "waiting_for_jobs"
+        consumer = await restarted_repository.claim_terminal_run(
+            now + timedelta(seconds=8), now + timedelta(seconds=38)
+        )
+        assert consumer is not None and consumer.job.job_id == request.job_id
+        fingerprint = coding_job_completion_fingerprint(consumer.job)
+        consumed = await restarted_repository.finish_consumption(
+            consumer,
+            status=RunStatus.COMPLETED,
+            resume_turn_id=f"{identity}-resume",
+            completion_fingerprint=fingerprint,
+            publication_outcome=MockPublicationOutcome(
+                status="draft_created",
+                reference=f"mock://draft-pr/{request.job_id}",
+                repository_revision=request.repository_revision,
+            ),
+            memory_id=None,
+            now=now + timedelta(seconds=9),
+        )
+        assert consumed.run.schema_version == "2"
+        assert consumed.job.consumed_by_turn_id == f"{identity}-resume"
 
         expired_request = _request(f"{identity}-expired", deadline_at=now + timedelta(minutes=5))
         await restarted_repository.submit(expired_request, now)

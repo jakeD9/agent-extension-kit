@@ -7,6 +7,7 @@ import pytest
 from team_agent_contracts import Citation, SkillFileManifest, SkillLock, SkillLockPackage
 from team_agent_runtime import (
     AgentDecision,
+    AgentFailure,
     AgentTurnRequest,
     AgentTurnResult,
     AgentTurnStatus,
@@ -79,6 +80,23 @@ class _RecordingRuntime:
         return _result(request, f"revision-{len(self.requests)}", f"answer-{len(self.requests)}")
 
 
+class _RetriableOnceRuntime(_RecordingRuntime):
+    async def execute(self, request: AgentTurnRequest) -> AgentTurnResult:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return AgentTurnResult(
+                run_id=request.run_id,
+                status=AgentTurnStatus.FAILED,
+                text="",
+                canonical_knowledge_citations=[],
+                supplemental_memory_citations=[],
+                decisions=[],
+                usage=AgentUsage(source=UsageSource.SYNTHETIC),
+                failures=[AgentFailure(code="temporary", message="Retry.", retriable=True)],
+            )
+        return _result(request, "revision-retry", "recovered")
+
+
 def test_continuation_uses_persisted_bounded_context_after_restart() -> None:
     async def check() -> None:
         repository = InMemoryConversationRepository()
@@ -119,6 +137,33 @@ def test_retry_replays_terminal_result_and_rejects_changed_request() -> None:
         assert len(inner.requests) == 1
         with pytest.raises(ConversationRequestConflictError):
             await runtime.execute("conversation-1", _request("run-1", "A different request"))
+
+    asyncio.run(check())
+
+
+def test_retriable_failed_turn_reopens_only_with_opt_in_and_gets_a_new_sequence() -> None:
+    async def check() -> None:
+        repository = InMemoryConversationRepository()
+        inner = _RetriableOnceRuntime()
+        runtime = DurableConversationRuntime(inner, repository)
+
+        failed = await runtime.execute("conversation-1", _request("run-1"))
+        default_replay = await runtime.execute("conversation-1", _request("run-1"))
+        await runtime.execute("conversation-1", _request("run-2"))
+        recovered = await runtime.execute(
+            "conversation-1", _request("run-1"), retry_retriable_failure=True
+        )
+        replay = await runtime.execute("conversation-1", _request("run-1"))
+
+        assert failed.status == AgentTurnStatus.FAILED
+        assert default_replay == failed
+        assert recovered.status == AgentTurnStatus.COMPLETED
+        assert replay == recovered
+        assert len(inner.requests) == 3
+        first = await repository.read_turn("conversation-1", "run-1")
+        second = await repository.read_turn("conversation-1", "run-2")
+        assert first is not None and second is not None
+        assert first["sequence"] > second["sequence"]
 
     asyncio.run(check())
 
@@ -701,6 +746,38 @@ def test_mongo_replay_clears_claim_left_after_terminal_turn_write() -> None:
         assert conversation is not None
         assert conversation["active_turn_id"] is None
         assert conversation["claim_expires_at"] is None
+
+    asyncio.run(check())
+
+
+def test_mongo_retriable_failed_turn_reopens_only_with_opt_in_and_new_sequence() -> None:
+    from team_agent_runtime.mongo_conversations import MongoConversationRepository
+
+    async def check() -> None:
+        database = _MongoDatabase()
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        repository = MongoConversationRepository(database)  # type: ignore[arg-type]
+        await repository.migrate(now)
+        inner = _RetriableOnceRuntime()
+        runtime = DurableConversationRuntime(inner, repository, clock=lambda: now)
+
+        failed = await runtime.execute("conversation-1", _request("run-1"))
+        default_replay = await runtime.execute("conversation-1", _request("run-1"))
+        await runtime.execute("conversation-1", _request("run-2"))
+        recovered = await runtime.execute(
+            "conversation-1", _request("run-1"), retry_retriable_failure=True
+        )
+        replay = await runtime.execute("conversation-1", _request("run-1"))
+
+        assert failed.status == AgentTurnStatus.FAILED
+        assert default_replay == failed
+        assert recovered.status == AgentTurnStatus.COMPLETED
+        assert replay == recovered
+        assert len(inner.requests) == 3
+        stored = await repository.read_turn("conversation-1", "run-1")
+        later = await repository.read_turn("conversation-1", "run-2")
+        assert stored is not None and stored["completed_at"] == now
+        assert later is not None and stored["sequence"] > later["sequence"]
 
     asyncio.run(check())
 
