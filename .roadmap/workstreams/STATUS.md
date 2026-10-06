@@ -26,6 +26,8 @@
   effectively-once visible conversation projection, idempotent supplemental lessons, deterministic
   mock publication outcomes, and transactional consumption under an explicit jobs schema v2
 - Known blockers: none
+- Parallel investigation: `.roadmap/spikes/temporal-durable-execution/SPIKE.md` compares the current
+  MongoDB-owned workflow with Temporal. It does not block S13 or authorize a production migration.
 - Next eligible slice: S13. Before work starts, agree on how the persistent executor creates,
   observes, validates, and reconciles a disposable Codex environment while keeping Mongo and
   publication credentials outside the runner.

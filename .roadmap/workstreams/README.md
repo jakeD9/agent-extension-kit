@@ -32,3 +32,7 @@ minimum required credentials, but no internal approval bureaucracy.
 
 Summaries record outcomes and evidence, not a transcript. A new session should be able to identify
 what is safe to consume, what remains stubbed, and exactly which slice is next.
+
+Parallel investigations live under `.roadmap/spikes/`. A spike gathers evidence and may recommend a
+future roadmap change, but it does not supersede an active slice or canonical architecture until the
+team explicitly accepts its decision.
