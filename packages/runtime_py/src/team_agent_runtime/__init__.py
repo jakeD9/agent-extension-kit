@@ -9,6 +9,30 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from team_agent_contracts import SKILL_NAME_PATTERN, Citation, SkillLock
 
+from team_agent_runtime.jobs import (
+    CodingHarness,
+    CodingJobClaim,
+    CodingJobConflictError,
+    CodingJobFailure,
+    CodingJobInputRequest,
+    CodingJobNotFoundError,
+    CodingJobOutcome,
+    CodingJobRecord,
+    CodingJobRepository,
+    CodingJobRequest,
+    CodingJobResult,
+    CodingJobStatus,
+    CodingRunSnapshot,
+    InMemoryCodingJobRepository,
+    MockCodingExecutor,
+    MockCodingHarness,
+    RunRecord,
+    RunStatus,
+    StaleCodingJobClaimError,
+    coding_job_request_fingerprint,
+    coding_job_result_fingerprint,
+)
+
 MAX_CONVERSATION_CONTEXT_CHARS = 48_000
 
 
@@ -148,8 +172,29 @@ __all__ = [
     "AgentTurnResult",
     "AgentTurnStatus",
     "AgentUsage",
+    "CodingHarness",
+    "CodingJobClaim",
+    "CodingJobConflictError",
+    "CodingJobFailure",
+    "CodingJobInputRequest",
+    "CodingJobNotFoundError",
+    "CodingJobOutcome",
+    "CodingJobRecord",
+    "CodingJobRepository",
+    "CodingJobRequest",
+    "CodingJobResult",
+    "CodingJobStatus",
+    "CodingRunSnapshot",
     "ConversationContext",
     "ConversationTurnContext",
     "DecisionKind",
+    "InMemoryCodingJobRepository",
+    "MockCodingExecutor",
+    "MockCodingHarness",
+    "RunRecord",
+    "RunStatus",
+    "StaleCodingJobClaimError",
     "UsageSource",
+    "coding_job_request_fingerprint",
+    "coding_job_result_fingerprint",
 ]

@@ -337,7 +337,7 @@ team-agent scheduler
 team-agent worker
 ```
 
-Ingress verifies Slack signatures, deduplicates events, acknowledges promptly, and enqueues work. The scheduler claims due occurrences. Workers claim runs with renewable leases. These modes may share a development process but must not require co-location.
+Ingress verifies Slack signatures, deduplicates events, acknowledges promptly, and enqueues work. The scheduler claims due occurrences. Coding-job executor workers claim `coding_jobs` with renewable leases; the attempt number is the fencing generation and worker identity is diagnostic claim binding, not a secret token or registry. Run-worker claims begin only when a run consumer exists in a later slice. These modes may share a development process but must not require co-location.
 
 Run states: `queued`, `running`, `waiting_for_jobs`, `needs_input`, `completed`, `failed`, `cancelled`, `timed_out`.
 
@@ -425,13 +425,14 @@ Cache downloads/dependencies only through scoped, controlled caches. Do not shar
 
 The harness adapter detects a terminal SDK result or CLI turn event and process outcome, then validates its structured output. Turn completion alone is not job success. The supervisor independently checks the resulting diff and required tests.
 
-The executor commits terminal job state and a completion notification to MongoDB atomically (or
-through an idempotent outbox protocol). A run worker consumes that notification, enters the same
+The executor commits terminal job state to MongoDB. That durable record is the portable polled
+completion signal in core v1; add an explicit notification or idempotent outbox only when a
+demonstrated delivery boundary requires one. A run worker consumes that terminal record, enters the same
 per-conversation serialization path as a user turn, and invokes Genkit with the validated result.
 MongoDB polling is the required portable baseline; change streams are optional when the deployment
 supports them.
 
-Deduplicate notifications by job/attempt/result version. Enforce deadlines and cancellation through the executor, and terminate remaining subprocesses. Persist incremental progress for CLI/Slack status without sending every token to Slack.
+Deduplicate S12 completion consumption by job, attempt, and result fingerprint. Enforce deadlines and cancellation through the executor, and terminate remaining subprocesses. Persist incremental progress for CLI/Slack status without sending every token to Slack.
 
 If a result requires input or authorization, save a resumable checkpoint and transition the logical run accordingly. Persist artifacts before destroying its workspace. Retrying a job uses a new attempt and does not republish an already completed external action.
 

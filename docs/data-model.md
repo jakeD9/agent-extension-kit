@@ -4,8 +4,9 @@
 
 S08 keeps persistent knowledge projections and supplemental shared working memory in `team_context`
 while rebuilding the complete domain skill catalog from the pinned Git/filesystem content pack.
-S10 adds application-owned durable conversations to the separate `agent_runtime` database. Genkit
-receives bounded context but does not own a session store or another transcript.
+S10 adds application-owned durable conversations to the separate `agent_runtime` database. S11 adds
+minimal runs and coding jobs for a mock executor. Genkit receives bounded context but does not own a
+session store, another transcript, or coding-job persistence.
 
 ## `team_context`
 
@@ -30,8 +31,10 @@ Owned by the team-agent control plane and never accessed by the context service:
 |---|---|
 | `conversations` | Current S10 conversation summary, compaction cursor, and minimal active-turn claim. |
 | `conversation_turns` | Current S10 ordered requests and complete results, including citations, usage, content revision, and skill lock. |
+| `runs` | S11 logical workflow envelopes. A submitted mock job leaves its run in `waiting_for_jobs`; S12 owns result consumption and run continuation. |
+| `coding_jobs` | S11 independently claimable coding work with immutable pinned input, renewable leases, fenced attempts, and one structured terminal result. |
 | `schema_migrations` | Applied runtime-database schema versions. |
-| `identities`, `slack_threads`, `runs`, `coding_jobs`, `event_receipts`, `automations`, `automation_runs`, `code_reviews`, `review_projections` | Planned collections created only by the later slice that first writes them. |
+| `identities`, `slack_threads`, `event_receipts`, `automations`, `automation_runs`, `code_reviews`, `review_projections` | Planned collections created only by the later slice that first writes them. |
 
 ### `conversations` fields
 
@@ -172,6 +175,93 @@ Indexes enforce unique `(conversation_id, sequence)` ordering and unique
 keeps completed-turn context and compaction scans bounded even when many failed turns exist. The
 conversation claim-expiry index supports operational recovery queries.
 
+### `runs` fields
+
+S11 deliberately gives the run no lease and no copied job result. It is the durable workflow
+envelope that S12 will resume after observing a terminal coding job.
+
+| Field | Purpose | Example |
+|---|---|---|
+| `_id` | Stable logical run ID. Multiple coding jobs may belong to one run. | `run-42` |
+| `schema_version` | Strict document-shape version. | `"1"` |
+| `project` | Project/domain boundary shared by every child job. | `platform` |
+| `conversation_id` | Durable conversation to resume after restart. | `conversation-42` |
+| `source_turn_id` | Exact conversation turn that requested this workflow. | `turn-7` |
+| `status` | S11 persists `waiting_for_jobs`; later workflow slices add consumer-owned transitions. | `waiting_for_jobs` |
+| `created_at`, `updated_at` | Creation and last workflow-envelope mutation times. Job progress does not rewrite the run in S11. | `2026-10-05T16:00:00Z` |
+
+### `coding_jobs` fields
+
+| Field | Purpose | Example |
+|---|---|---|
+| `_id` | Stable caller-supplied job ID used for status, cancellation, and external-resource labels. | `job-42` |
+| `schema_version` | Strict document-shape version. | `"1"` |
+| `run_id` | Parent workflow run. It is non-unique because later workflows may submit several jobs. | `run-42` |
+| `project` | Project/domain boundary duplicated for indexed idempotency and diagnostics. | `platform` |
+| `submission_idempotency_key` | Caller retry identity. `(project, submission_idempotency_key)` is unique. | `event-7:fix` |
+| `request_fingerprint` | SHA-256 of the complete immutable request. A changed retry is rejected. | `sha256:8d0f...` |
+| `request` | Strict input: pinned repository revision, objective, content revision, generic skill lock, mode, harness, and deadline. | See sample. |
+| `deadline_at` | Indexed BSON date duplicated from the request for atomic claim/renew/complete checks. | `2026-10-05T16:30:00Z` |
+| `status` | Lifecycle: `queued`, `running`, `completed`, `failed`, `timed_out`, `cancelled`, or `needs_input`. | `completed` |
+| `attempt` | Monotonic fencing generation. Claim/reclaim increments it; renewal does not. | `2` |
+| `worker_id` | Bounded diagnostic owner and claim binding. It is not a credential or worker registry. | `executor-3` |
+| `lease_expires_at` | Renewable supervision deadline while running; `null` otherwise. | `2026-10-05T16:11:00Z` |
+| `cancel_requested_at` | Time cancellation won the terminal-state race, or `null`. | `null` |
+| `result` | One strict structured success result, only for `completed`; large artifacts stay external. | See sample. |
+| `outcome` | Domain conclusion only for `completed`: `fixed`, `no_fix_found`, or `unsafe_to_proceed`. | `fixed` |
+| `result_fingerprint` | Replays the exact same completion and rejects a contradictory one. | `sha256:19ac...` |
+| `failure` | Bounded execution/contract failure only for `failed`. | `null` |
+| `input_request` | Bounded question/checkpoint only for `needs_input`; S12 owns continuation. | `null` |
+| `created_at`, `updated_at` | Creation and latest state-mutation times. | `2026-10-05T16:00:00Z` |
+| `started_at` | Start of the current fenced attempt; it changes on reclaim. | `2026-10-05T16:10:00Z` |
+| `completed_at` | Terminal persistence time, or `null` while queued/running. | `2026-10-05T16:12:00Z` |
+
+Abbreviated completed records:
+
+```json
+{
+  "run": {
+    "_id": "run-42", "schema_version": "1", "project": "platform",
+    "conversation_id": "conversation-42", "source_turn_id": "turn-7",
+    "status": "waiting_for_jobs", "created_at": "2026-10-05T16:00:00Z",
+    "updated_at": "2026-10-05T16:00:00Z"
+  },
+  "coding_job": {
+    "_id": "job-42", "schema_version": "1", "run_id": "run-42", "project": "platform",
+    "submission_idempotency_key": "event-7:fix", "status": "completed",
+    "request_fingerprint": "sha256:8d0f...",
+    "request": {
+      "schema_version": "1", "job_id": "job-42", "run_id": "run-42",
+      "conversation_id": "conversation-42", "source_turn_id": "turn-7",
+      "submission_idempotency_key": "event-7:fix", "project": "platform",
+      "repository": "company/service", "repository_revision": "commit-123",
+      "objective": "Repair the worker", "mode": "fix", "harness": "mock",
+      "content_revision": "content-abc",
+      "selected_skill_lock": {"schema_version": "1", "target": "generic", "catalog_revision": "content-abc", "project": "platform", "packages": []},
+      "deadline_at": "2026-10-05T16:30:00Z"
+    },
+    "deadline_at": "2026-10-05T16:30:00Z", "attempt": 1,
+    "worker_id": null, "lease_expires_at": null, "cancel_requested_at": null,
+    "result": {"schema_version": "1", "job_id": "job-42", "outcome": "fixed", "summary": "Worker repaired", "changed_paths": ["src/worker.py"], "checks": ["pytest"]},
+    "outcome": "fixed", "result_fingerprint": "sha256:19ac...",
+    "failure": null, "input_request": null,
+    "created_at": "2026-10-05T16:00:00Z", "updated_at": "2026-10-05T16:12:00Z",
+    "started_at": "2026-10-05T16:10:00Z", "completed_at": "2026-10-05T16:12:00Z"
+  }
+}
+```
+
+Submission creates an absent run and its job in one transaction. An exact retry returns the existing
+snapshot. Claim is an atomic queue update. The supervisor renews while the harness runs and commits
+terminal state only while `status`, `worker_id`, `attempt`, lease, and deadline still match.
+Cancellation, timeout, and completion are therefore a one-winner compare-and-set race. Recovery
+requeues expired running attempts; the next claim increments `attempt`. The durable terminal job is
+the portable v1 completion signal, so S11 has no outbox or notification collection.
+
+The disposable mock harness never receives Mongo credentials or declares authoritative completion.
+It returns a structured object; the persistent executor validates and stores it. S13 adds external
+process/container observation, artifact collection, and supervisor checks behind the same boundary.
+
 ### Runtime schema changes
 
 Startup migration creates missing collections, applies strict validators with `collMod`, creates the
@@ -180,6 +270,9 @@ required indexes idempotently, and records `runtime-schema-v1` in `schema_migrat
 record identifies which database-level setup has run. A later incompatible shape requires an
 explicit v2 migration and data transition before changing the validator—it is not inferred from the
 Pydantic model and old records are never silently reinterpreted.
+
+S11 additionally records `runtime-jobs-schema-v1`. The distinct marker prevents the existing S10
+runtime migration from falsely implying that job validators and indexes exist.
 
 ## Shared requirements
 

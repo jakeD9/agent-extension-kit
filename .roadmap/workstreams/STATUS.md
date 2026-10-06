@@ -1,9 +1,9 @@
 # Workstream Status
 
-- Current slice: S11 — durable mock coding jobs
-- State: S10 durable Genkit conversations implemented, independently reviewed, and verified; S11
-  requires its pre-slice technical check-in before implementation
-- Completed dependencies: S01, S02, S03, S04, S05, S06, S07, S08, S09, S10
+- Current slice: S12 — mock diagnose-and-fix workflow
+- State: S11 durable mock coding jobs implemented, independently reviewed, and verified; S12 requires
+  its pre-slice technical check-in before implementation
+- Completed dependencies: S01, S02, S03, S04, S05, S06, S07, S08, S09, S10, S11
 - Verified capabilities: strict MongoDB context migrations, pinned revision synchronization,
   project/domain-admitted bounded candidate retrieval with atomic active-revision projection,
   restart-persistent cited REST search, Git/filesystem-backed skill discovery/loading without Mongo
@@ -17,12 +17,16 @@
   a stateless provider-neutral Genkit turn using a temporary locked skill projection plus observed
   canonical and supplemental evidence, and application-owned MongoDB conversations with ordered
   provenance-rich turns, deterministic bounded context, transactional claims/completion, restart
-  recovery, and no Genkit `SessionStore`
+  recovery, and no Genkit `SessionStore`, plus minimal durable runs and mock coding jobs with pinned
+  repository/content/skill inputs, transactional idempotent submission, renewable job-only leases,
+  attempt fencing, separate lifecycle/outcome, bounded reconciliation, restart recovery, and a
+  supervisor-owned structured completion boundary without an outbox
 - Known blockers: none
-- Next eligible slice: S11. Before work starts, agree on its minimal run/job lifecycle and separate
-  domain outcomes, submission idempotency, claim/recovery mechanism, cancellation/deadline behavior,
-  and mock executor verification. Do not introduce generalized workflow or action frameworks without
-  a demonstrated crash boundary.
+- Next eligible slice: S12. Before work starts, agree on how the coordinator submits one pinned mock
+  fix job, persists suspension, polls and idempotently consumes its terminal record, resumes through
+  the existing per-conversation serialization path, handles `needs_input`, and records one mock
+  draft-PR outcome. Keep Docker, real harness execution, publication, Slack, and generalized workflow
+  frameworks out of this slice.
 - Delivery tracks: core v1 is S09–S16, S20, S23, and S24. S17–S19, S21, and S22 are optional
   expansion work and do not gate core hardening or adoption documentation.
 - Canonical brief: `.roadmap/team-agent-architecture-brief-genkit.md`
@@ -31,5 +35,5 @@
 - Required Git-to-Mongo CI contract: `docs/required-ci-implementations.md`
 - Genkit development skill: `.agents/skills/developing-genkit-python/SKILL.md`
 
-Read the S01 through S10 `SUMMARY.md` files before the S11 technical check-in, including every
+Read the S01 through S11 `SUMMARY.md` files before the S12 technical check-in, including every
 supersession notice and the replacement S08 verification evidence.

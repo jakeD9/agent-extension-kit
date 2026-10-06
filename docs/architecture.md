@@ -17,7 +17,8 @@ the already-published revision. Shared Python clients provide a
 JSON-first context CLI, a five-tool stdio MCP adapter, and verified generic/Codex/Claude skill
 distribution. S08 removed the previously delivered per-artifact groups and memory approval
 workflow. Genkit compatibility, the stateless coordinator, and application-owned durable
-conversations are implemented; coding jobs, Slack, and automation are not yet implemented.
+conversations and durable mock coding jobs are implemented; real repository execution, Slack, and
+automation are not yet implemented.
 
 ## Runtime boundaries
 
@@ -43,7 +44,8 @@ authorization, durable execution, validation, and external side effects.
   supplemental shared working memory, idempotency receipts, and immutable context audit. It does
   not own canonical knowledge or the skill catalog.
 - The `agent_runtime` MongoDB database owns application-level conversations, ordered turns, bounded
-  summaries, and short-lived turn claims. Later slices add workflows, jobs, automations, reviews,
+  summaries, short-lived turn claims, durable runs, and leased coding jobs. Later slices add
+  workflow consumption, real executors, automations, reviews,
   and projections there. Genkit consumes bounded conversation context but does not own or persist
   the authoritative transcript.
 - The databases use distinct service credentials. Only the context service can access `team_context`.
