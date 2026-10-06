@@ -50,6 +50,8 @@ after the team approves that boundary.
   > After this: the core context-to-Genkit-to-Slack-to-Codex-to-publication path passes bounded security, restart, cancellation, injection, and side-effect reconciliation suites.
 - [ ] **S24: Domain adoption and CI publication guide** `risk:medium` `depends:[S20]`
   > After this: a GitHub or GitLab team can map its domain into the generic exact-SHA Git-to-Mongo publication and reconciliation contract without provider-specific kit configuration.
+- [ ] **S25: Repository structure cleanup** `risk:medium` `depends:[S23,S24]`
+  > After this: production models, orchestration, persistence, adapters, and test support have clear module boundaries; mocks and fixtures live under test-owned paths; and package `__init__.py` files contain only narrow stable exports without changing behavior.
 
 ## Optional expansion path
 

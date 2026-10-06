@@ -597,11 +597,16 @@ Exit: duplicate/conflicting findings are reconciled with evidence; stale heads a
 ### Phase 6 — Real integrations and hardening
 
 Implement configured Git provider publication, credential rotation, injection/failure evals,
-operational recovery docs, and the S24 team/domain CI adoption guide. Keep deployment neutral and
-the CI publication contract platform agnostic. Additional providers, the Claude harness, scheduled
-automation, and parallel review are optional expansions rather than v1 gates.
+operational recovery docs, the S24 team/domain CI adoption guide, and the final S25 repository
+structure cleanup. That cleanup separates durable contracts/models, orchestration, persistence,
+provider adapters, and test support; keeps mocks and fixtures in test-owned paths; and reduces
+package `__init__.py` files to narrow stable exports. Keep deployment neutral and the CI publication
+contract platform agnostic. Additional providers, the Claude harness, scheduled automation, and
+parallel review are optional expansions rather than v1 gates.
 
-Exit: end-to-end fixture and failure suites pass; real publication uses supervisor credentials only; no merge/deploy/production capability is exposed; local extension remains usable without Genkit.
+Exit: end-to-end fixture and failure suites pass; real publication uses supervisor credentials only;
+no merge/deploy/production capability is exposed; local extension remains usable without Genkit;
+and the final structural refactor preserves public behavior and verification evidence.
 
 ## 15. Required verification
 

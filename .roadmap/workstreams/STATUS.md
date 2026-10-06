@@ -27,8 +27,9 @@
   the existing per-conversation serialization path, handles `needs_input`, and records one mock
   draft-PR outcome. Keep Docker, real harness execution, publication, Slack, and generalized workflow
   frameworks out of this slice.
-- Delivery tracks: core v1 is S09–S16, S20, S23, and S24. S17–S19, S21, and S22 are optional
-  expansion work and do not gate core hardening or adoption documentation.
+- Delivery tracks: core v1 is S09–S16, S20, S23, S24, and the final structural cleanup S25.
+  S17–S19, S21, and S22 are optional expansion work and do not gate core hardening or adoption
+  documentation.
 - Canonical brief: `.roadmap/team-agent-architecture-brief-genkit.md`
 - Skill distribution: incorporated into the canonical brief; the former addendum is archived
 - Domain authority dogma: `docs/domain-knowledge-authority.md`
