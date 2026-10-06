@@ -1,16 +1,27 @@
 # Team Agent Architecture: Genkit Python Runtime and Portable Extension Kit
 
-Status: Implementation handoff — supersedes the earlier ADK brief
-Updated: 2026-10-04
+Status: Canonical implementation architecture
+Updated: 2026-10-05
 Audience: Codex and the engineering team
-
-The implementation requirements in `skills-distribution-addendum.md` are normative where they
-replace this brief's earlier skill-catalog or distribution design.
 
 The architectural dogma in `docs/domain-knowledge-authority.md` is normative across every slice.
 This deployment serves one small, trusted team and domain. Admission to that project/domain is the
 content boundary; admitted developers can use and contribute the complete domain knowledge, skills,
 and shared working memory. Do not introduce per-artifact groups or field-level content policy.
+
+### Document precedence
+
+| Document class | Purpose and precedence |
+|---|---|
+| Domain knowledge authority | Stable dogma; governs every implementation decision. |
+| This brief | Single canonical target architecture and implementation sequence. |
+| Current workstream brief | Narrows one slice without overriding the dogma or this architecture. |
+| `docs/` | Describes behavior implemented now; it is not a second future roadmap. |
+| Workstream summaries and `archive/` | Historical evidence and design input; never normative. |
+
+The binding Git-backed skill-distribution decisions are incorporated here. The former addendum,
+external architecture review, and superseded ADK brief are archived. Reconcile future conflicts in
+this brief before implementation instead of choosing silently between documents.
 
 ## 1. Goal and architectural decisions
 
@@ -23,9 +34,10 @@ Decisions:
 - Python control plane and context service; use uv, a locked dependency set, typing, Ruff, and pytest.
 - Genkit Python is the hosted runtime. Keep its types inside a runtime adapter package. Python is preview and the Agents API is beta; verify the installed release before relying on newer agent features.
 - Python owns services, orchestration, contracts, and runner supervision. A pinned Codex executable is an external dependency; no TypeScript application service is required.
-- The initial coordinator target is a Codex-capable OpenAI model through Genkit's Python OpenAI
-  plugin, using an explicit API model ID verified in the compatibility gate. Gemini and Anthropic
-  remain later provider-contract targets. Model agnostic does not mean identical feature behavior.
+- The initial coordinator uses the already verified OpenAI Responses model adapter and explicit
+  model ID. Coding capability is not a permanent coordinator requirement because repository work
+  belongs to the external harness. Gemini and Anthropic remain later provider-contract targets.
+  Model agnostic does not mean identical feature behavior.
 - MongoDB cluster is the only required durable database. Use separate `agent_runtime` and `team_context` databases and credentials.
 - REST is the primary context-service interface; MCP and CLI adapt the same application services.
 - Git owns canonical knowledge, conventions, and skills. The context service builds skill discovery
@@ -69,6 +81,11 @@ flowchart TD
 Agent delegation and execution isolation are independent. A Genkit agent or tool delegates to a coding adapter; the executor provisions its environment. Use clear names in code: `GenkitRuntime`, `CodingJobExecutor`, `CodingHarness`, and `CodingRunner`. A model plugin is not a Codex/Claude coding harness.
 
 ## 3. Repository layout
+
+This is a conceptual ownership map, not a requirement to create one distribution for every box.
+Extend the existing packages and use Python submodules until an independent deployment, dependency,
+or ownership boundary proves that another package is useful. Avoid package-consolidation churn as
+well as speculative package proliferation.
 
 ```text
 team-agent/
@@ -144,15 +161,20 @@ derives citations from observed tool results.
 | Capability | Genkit contribution | Application code |
 |---|---|---|
 | Reasoning and model calls | Model plugins, generation, tool loop | Provider configuration and capability tests |
-| Conversational coordinator | Python agent API where verified | Slack identity, thread mapping, turn serialization |
+| Conversational coordinator | `ai.generate()` model/tool loop | Bounded history, Slack identity, thread mapping, turn serialization |
 | Specialist delegation | Agent calls or tools wrapping specialist flows | Allowed graph, budgets, reconciliation |
-| Persistent conversation | Consumes bounded summary and recent turns | MongoDB history, compaction, CAS, leases and fencing |
+| Persistent conversation | Consumes bounded summary and recent turns | MongoDB history, deterministic compaction, local serialization, persisted claims |
 | External coding | Tool wrapping a coding-job adapter | Queue, container executor, harness adapter |
 | Retrieval | Tools and optional retriever integration | Context service, scope filtering, MongoDB search |
 | Automations | Invoked agent/flow | Event matcher, scheduler, leases and idempotency |
 | Observability | Flow/model/tool traces and developer UI | Redaction, job/action audit, retention |
 
-Use `ai.define_agent()` for the conversational coordinator if supported in the pinned release. Use `@ai.flow()` for typed specialist operations and explicit workflow stages, and `@ai.tool()` for narrowly scoped capabilities. These are documented Python APIs; verify their exact signatures and imports in the selected release. Do not translate TypeScript examples mechanically.
+Use `ai.generate()` with tools and application-supplied bounded conversation context for the v1
+coordinator. Do not configure a Genkit `SessionStore`: the application transcript is authoritative,
+and Genkit's store would add snapshot/resume semantics without solving context compaction. Use
+`@ai.flow()` for typed specialist operations and explicit workflow stages, and `@ai.tool()` for
+narrowly scoped capabilities. Verify exact signatures and imports in the pinned Python release. Do
+not translate TypeScript examples mechanically.
 
 Genkit flows are ordinary callable workflow functions with tracing and schemas. Treat the application job store as the authority for cross-process orchestration and recovery. Native detached agent turns, if adopted later, remain separate from container jobs.
 
@@ -174,18 +196,21 @@ A Genkit coding specialist can wrap `start_coding_job`, but actual editing and c
 
 Before implementing the real runtime, pin a Python version, Genkit release, provider plugins, and harness versions in `uv.lock` and image build inputs. Document the tested matrix in `docs/compatibility.md`.
 
-Verify agent creation, tool calls, structured output, streaming, sessions, custom store hooks, abort behavior, and FastAPI integration against executable examples. Check specialist delegation in Python explicitly: availability in TypeScript or Go is not evidence of Python parity.
+Verify agent creation, tool calls, structured output, streaming, sessions, custom store hooks, abort
+behavior, and FastAPI integration against executable examples. Session and custom-store checks are
+compatibility evidence, not the selected production persistence design. Check specialist delegation
+in Python explicitly: availability in TypeScript or Go is not evidence of Python parity.
 
 If delegation middleware is unavailable, expose specialists as Genkit tools backed by flows. Use an explicit Python workflow state machine for fixed order, parallel branches, and joins. If the agent API fails required tests, implement the same `AgentRuntime` interface with Genkit flows/`generate()` and application-owned history. Keep Genkit and Python; record the fallback. Do not introduce a TypeScript service, LangGraph, or another orchestrator without a concrete need.
 
 ### Model providers
 
-Use a configuration-driven model factory. Support OpenAI first through the pinned `genkit-openai`
-plugin and an explicit Codex-capable API model ID. The compatibility gate selects and records the
-exact tested ID rather than treating “Codex” as an API identifier. Keep Anthropic and Gemini
-configurations extensible. Use provider plugins supported by the installed Python release; a thin
-custom model adapter is permissible if documented and tested. Do not route through LiteLLM by
-default.
+Use a configuration-driven model factory. Support OpenAI first through the verified Responses
+adapter and one explicit API model ID. The compatibility gate selects and records the exact tested
+ID; it does not make coding-oriented reasoning a permanent coordinator constraint. Keep Anthropic
+and Gemini configurations extensible. Use provider plugins supported by the installed Python
+release; a thin custom model adapter is permissible if documented and tested. Do not route through
+LiteLLM by default.
 
 The OpenAI model plugin and `CodexHarness` are different adapters. The former performs hosted
 coordinator reasoning through Genkit. The latter invokes the pinned Codex executable inside a
@@ -232,14 +257,20 @@ instructions. Canonical Git content wins any conflict. Cap context size.
 
 ## 5. Sessions, history, and shared memory
 
-One Slack thread maps to one conversation under a unique `(workspace_id, channel_id, thread_ts)` key. Serialize turns across replicas. Follow-ups continue the conversation when earlier work submitted jobs or requested clarification.
+One Slack thread maps to one conversation under a unique `(workspace_id, channel_id, thread_ts)`
+key. V1 runs one active coordinator-worker process. It may process different conversations
+concurrently but serializes turns for the same conversation with a process-local lock. Follow-ups
+continue the conversation when earlier work submitted jobs or requested clarification.
 
-Keep one application-owned conversation history as ordered turns plus a bounded summary. Use MongoDB
-compare-and-set revisions, conversation leases, and fencing tokens; a process-local lock is
-insufficient. Each turn records its exact Git content revision and skill lock. Later turns may use
+Keep one application-owned conversation history as ordered turns plus a bounded deterministic
+summary. Each model call receives only that summary and a bounded window of recent completed turns;
+never read or replay the complete transcript. MongoDB compare-and-set updates and the minimal claim
+fields `active_turn_id`, `claim_generation`, and `claim_expires_at` recover abandoned work and reject
+stale completions after a restart. V1 has no renewable conversation lease, owner registry, or opaque
+lease token. Each turn records its exact Git content revision and skill lock. Later turns may use
 newer canonical knowledge, while a coding job pins one exact revision for its lifetime. Do not build
-snapshot ancestry, conversation branching, or a second framework-owned authoritative transcript in
-v1. Genkit state, if retained, stays an adapter detail.
+snapshot ancestry, conversation branching, Genkit `SessionStore` persistence, or a second
+framework-owned authoritative transcript in v1.
 
 Keep three concepts separate:
 
@@ -283,13 +314,13 @@ verified Python MCP client integration may be added later without duplicating bu
 not assume Genkit's developer MCP server is the runtime context server.
 
 Ingestion reads canonical sources at one exact protected Git revision, normalizes and chunks them,
-attaches project/domain provenance, generates embeddings, and stages a complete revision-scoped
-projection. Publication verifies the candidate and atomically advances an active-revision pointer;
-retrieval never mixes revisions. Retrieval verifies project/domain admission before returning
-content, combines lexical and vector results, optionally reranks, and returns citations. Implement
-the platform-neutral CI and reconciliation contract in `docs/required-ci-implementations.md`. Use
-MongoDB Search and Vector Search where supported. Preserve a `KnowledgeService` interface if the
-cluster requires another search implementation.
+attaches project/domain provenance, and stages a complete revision-scoped projection. Publication
+verifies the candidate and atomically advances an active-revision pointer; retrieval never mixes
+revisions. Retrieval verifies project/domain admission before returning content, uses bounded
+lexical scoring as the v1 baseline, and returns citations. Add embeddings, vector search, or
+reranking only when retrieval evals demonstrate misses that justify them. Implement the
+platform-neutral CI and reconciliation contract in `docs/required-ci-implementations.md`. Preserve
+a `KnowledgeService` interface if the cluster requires another search implementation.
 
 Each returned chunk includes source ID, repository/path, exact commit revision, owner, project/domain,
 projection build metadata, update timestamp, and citation reference. MongoDB chunks are rebuildable
@@ -394,7 +425,11 @@ Cache downloads/dependencies only through scoped, controlled caches. Do not shar
 
 The harness adapter detects a terminal SDK result or CLI turn event and process outcome, then validates its structured output. Turn completion alone is not job success. The supervisor independently checks the resulting diff and required tests.
 
-The executor commits terminal job state and a completion notification to MongoDB atomically (or through an idempotent outbox protocol). A run worker consumes that notification, fences concurrent conversation updates, and invokes Genkit with the validated result. MongoDB polling is the required portable baseline; change streams are optional when the deployment supports them.
+The executor commits terminal job state and a completion notification to MongoDB atomically (or
+through an idempotent outbox protocol). A run worker consumes that notification, enters the same
+per-conversation serialization path as a user turn, and invokes Genkit with the validated result.
+MongoDB polling is the required portable baseline; change streams are optional when the deployment
+supports them.
 
 Deduplicate notifications by job/attempt/result version. Enforce deadlines and cancellation through the executor, and terminate remaining subprocesses. Persist incremental progress for CLI/Slack status without sending every token to Slack.
 
@@ -411,8 +446,10 @@ harness-reported checks, independent verification, exact reviewed SHA, publicati
 and supplemental working-memory suggestions. Findings include severity, path/line reference,
 explanation, evidence, and suggested action.
 
-Terminal job states: `completed`, `failed`, `timed_out`, `cancelled`, `needs_input`,
-`no_fix_found`, `unsafe_to_proceed`.
+Job lifecycle states are `completed`, `failed`, `timed_out`, `cancelled`, and `needs_input`.
+Domain results such as `fixed`, `no_fix_found`, or `unsafe_to_proceed` belong in a separate outcome
+field; a successfully completed investigation is not a failed lifecycle merely because no safe fix
+exists.
 
 The supervisor creates an ephemeral workspace, checks out exact revisions, configures project instructions and the extension, grants scoped credentials, launches the harness, validates output/diff, executes mandatory checks, and performs authorized publication. Keep Git write credentials out of model context and harness environment. Verification must use an execution environment with no publication credentials; repository tests are arbitrary code.
 
@@ -461,9 +498,10 @@ needed for provenance and retry.
 
 Only the context service accesses `team_context`. Local agents receive no MongoDB credentials. Use collection validators and explicit schema migrations.
 
-Required core indexes cover Slack thread identity, Slack event receipt ID, ordered conversation turns,
-coding submission, publication idempotency, exact review target, lease expiration, and context
-scope/source revision. Optional automation slices add occurrence and projection keys. Apply TTL only
+Required core indexes cover Slack thread identity, Slack event receipt ID, ordered conversation
+turns, conversation request idempotency and claim expiry, coding submission, publication
+idempotency, exact review target, and context scope/source revision. Optional automation slices add
+occurrence and projection keys. Apply TTL only
 to disposable receipts or expired data with a defined retention policy, not authoritative completion
 records needed for deduplication.
 
@@ -492,9 +530,10 @@ Provide `.env.example` with placeholders and safe mock mode. Default local demos
 
 ### Phase 0 — Python compatibility spike
 
-Verify the pinned Genkit Python APIs and the OpenAI plugin using a small executable sample. Select
-and record one exact Codex-capable OpenAI API model ID. Validate tool calls, structured outputs,
-streaming, conversation continuation, custom session persistence, Skills middleware, abort behavior,
+Verify the pinned Genkit Python APIs and the OpenAI adapter using a small executable sample. Select
+and record one exact initial OpenAI API model ID. Validate tool calls, structured outputs,
+streaming, conversation continuation, custom session persistence as compatibility evidence, Skills
+middleware, abort behavior,
 FastAPI integration, and available specialist delegation. Record feature support and choose Agents
 API or flows fallback. Keep live API checks opt-in; deterministic fakes must let later application
 work proceed without credentials. Test the actual Codex noninteractive command and Claude Python SDK
@@ -524,7 +563,10 @@ stateless diagnostic/CI JSON probe, then application-owned ordered conversations
 summaries. Use deterministic runtime fixtures in CI, then validate one live provider when credentials
 exist.
 
-Exit: skill-guided retrieval works; multi-turn state survives restart; concurrent same-thread turns are serialized; live-provider limitations are documented without silent parameter dropping.
+Exit: skill-guided retrieval works; bounded multi-turn state survives restart; concurrent
+same-conversation turns are serialized inside the one-worker deployment; abandoned claims recover
+without accepting a stale completion; live-provider limitations are documented without silent
+parameter dropping.
 
 ### Phase 3 — Coding vertical slice
 
@@ -563,7 +605,7 @@ Exit: end-to-end fixture and failure suites pass; real publication uses supervis
 ## 15. Required verification
 
 Use meaningful unit/integration tests for domain admission, complete-corpus visibility, Git-over-memory
-precedence, working-memory lifecycle, conversation persistence/CAS/fencing, Slack deduplication,
+precedence, working-memory lifecycle, conversation persistence/claims, Slack deduplication,
 publication reconciliation, skill selection, stale-head review, cancellation, diff rejection,
 credential separation, and provider translation. Optional automation and parallel-review slices add
 event/occurrence deduplication and partial-reviewer failure checks. Include prompt-injection fixtures
@@ -591,16 +633,8 @@ Checked against current documentation on 2026-10-03. Pin and verify actual packa
 - Codex SDK source (TypeScript, reference only): https://github.com/openai/codex/tree/main/sdk/typescript
 - Claude Agent SDK: https://code.claude.com/docs/en/agent-sdk/overview
 
-## 17. Codex kickoff instructions
+## 17. Execution status
 
-Use this document as the implementation source of truth. Implement, rather than only proposing a plan.
-
-1. Inspect the target repository and its instructions. Preserve existing conventions where compatible.
-2. Run Phase 0 to verify current Genkit Python agents, flows, tools, session-store and provider APIs. Choose pinned dependencies and document any required adjustments.
-3. Create a concise file-level plan and begin Phase 1. Do not block on routine choices already made in this spec.
-4. Build incrementally through the mock `diagnose-and-fix` vertical slice, with meaningful tests and runnable Compose instructions.
-5. Keep application/domain interfaces free of Genkit types, retain REST/MCP/CLI parity, and keep durable execution outside the model loop.
-6. Use mocks when credentials are absent. Do not claim live Opus/Sol or real Codex/Git integration passed without running it.
-7. Report completed phases, verification results, remaining stubs, and exact next steps.
-
-Do not add production orchestrator manifests, unrestricted recursive agents, automatic merges/deployments, raw shared-database tools, or a relational database dependency. Do not replace Codex/Claude Code with a homemade coding loop. Do not expose secrets in prompts, traces, fixtures, or logs. Expand to the bounded parallel review only after the single-run path is reliable.
+Use `ROADMAP.md` for dependency order and `workstreams/STATUS.md` for the current slice and required
+technical check-in. This brief defines the target architecture; it does not restart completed phases
+or override as-built documentation and verified workstream summaries.

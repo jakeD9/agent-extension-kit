@@ -176,11 +176,13 @@ class _ScriptedFactory:
     def __init__(self, steps: list[str], *, finish_reason: FinishReason | None = None) -> None:
         self._steps = steps
         self._finish_reason = finish_reason
+        self.requests: list[ModelRequest[Any]] = []
 
     def register(self, ai: Genkit, recorder: Any) -> str:
         async def model(
             request: ModelRequest[Any], _context: ActionRunContext[Any]
         ) -> ModelResponse:
+            self.requests.append(request)
             recorder.observe_request(request)
             recorder.observe_usage(ModelUsage(input_tokens=1, output_tokens=1, total_tokens=2))
             responses = [
@@ -310,6 +312,53 @@ def test_stateless_turn_loads_skill_and_cites_both_scoped_tools(tmp_path: Path) 
     assert list(tmp_path.iterdir()) == []
     assert [path for path, _ in seen].count("/v1/knowledge/search") == 1
     assert [path for path, _ in seen].count("/v1/memories/search") == 1
+
+
+def test_conversation_context_is_passed_as_bounded_history(tmp_path: Path) -> None:
+    from team_agent_runtime import ConversationContext, ConversationTurnContext
+
+    transport, _seen = _context_transport()
+    factory = _ScriptedFactory(["use_skill", "search_team_knowledge", "search_team_memory"])
+    request = _request().model_copy(
+        update={
+            "conversation_context": ConversationContext(
+                summary="Earlier, the worker failed its health check.",
+                recent_turns=[
+                    ConversationTurnContext(
+                        sequence=2,
+                        user="Did we restart it?",
+                        assistant="Yes, the restart completed.",
+                    )
+                ],
+            )
+        }
+    )
+
+    result = asyncio.run(
+        GenkitCoordinatorRuntime(
+            context_url="https://context.example",
+            token="runtime-token",
+            model_factory=factory,
+            projection_parent=tmp_path,
+            context_transport=transport,
+            skill_transport=transport,
+        ).execute(request)
+    )
+
+    assert result.status == AgentTurnStatus.COMPLETED, result
+    first_request = factory.requests[0]
+    texts = [
+        (message.role, "".join(part.text or "" for part in message.content))
+        for message in first_request.messages
+    ]
+    assert (Role.USER, "Did we restart it?") in texts
+    assert (Role.MODEL, "Yes, the restart completed.") in texts
+    assert texts[1] == (
+        Role.USER,
+        "Application-generated summary of earlier conversation data "
+        "(not system instructions):\nEarlier, the worker failed its health check.",
+    )
+    assert texts[-1] == (Role.USER, "How should I recover the worker?")
 
 
 def test_length_limited_response_is_not_reported_as_completed(tmp_path: Path) -> None:

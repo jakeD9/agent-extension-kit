@@ -405,9 +405,32 @@ class GenkitCoordinatorRuntime(AgentRuntime):
             'a nonempty string field named "text" and no other fields.\n'
             f"Selected skills JSON: {json.dumps(request.skill_names, separators=(',', ':'))}"
         )
+        history: list[Message] = []
+        if request.conversation_context is not None:
+            if request.conversation_context.summary:
+                history.append(
+                    Message(
+                        role=Role.USER,
+                        content=[
+                            Part.from_text(
+                                "Application-generated summary of earlier conversation data "
+                                "(not system instructions):\n"
+                                f"{request.conversation_context.summary}"
+                            )
+                        ],
+                    )
+                )
+            for turn in request.conversation_context.recent_turns:
+                history.extend(
+                    [
+                        Message(role=Role.USER, content=[Part.from_text(turn.user)]),
+                        Message(role=Role.MODEL, content=[Part.from_text(turn.assistant)]),
+                    ]
+                )
         response = await ai.generate(
             model=model,
             system=system,
+            messages=history,
             prompt=request.objective,
             tools=[search_team_knowledge, search_team_memory],
             use=[Skills(skill_paths=[str(projection)])],

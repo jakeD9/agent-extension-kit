@@ -133,5 +133,6 @@ not enter the Python runtime image.
 ## Deferred boundaries
 
 S07 adds no production coordinator, MongoDB session store, durable job, Slack behavior, provider
-fallback, or coding-harness invocation. The recording store is only a protocol proof. S09 owns the
-coordinator and S10 owns durable conversations.
+fallback, or coding-harness invocation. The recording store proves only that the pinned Genkit API
+can persist and resume snapshots; it is not the production conversation design. S09 owns the
+coordinator, and S10 owns application-level durable conversations with no Genkit `SessionStore`.

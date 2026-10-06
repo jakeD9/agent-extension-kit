@@ -1,5 +1,8 @@
 # Addendum: Git-Backed Skills and CLI Distribution
 
+> **Archived design input.** Its binding decisions are incorporated into the canonical Genkit
+> architecture brief. This file is retained only as the historical distribution specification.
+
 Date: 2026-10-04
 Applies to: `team-agent-architecture-brief.md` and `team-agent-architecture-brief-genkit.md`
 Status: Implementation requirements; commands are proposed interfaces.

@@ -6,6 +6,10 @@ idempotent submission, status/result, cancellation, deadline handling, and resta
 pins the exact Git revision and skill lock selected when it is created. Implement `MockCodingHarness`
 and a mock executor without repository access or publication.
 
+Keep lifecycle separate from domain outcome. Lifecycle is `completed`, `failed`, `timed_out`,
+`cancelled`, or `needs_input`; a completed result may separately report `fixed`, `no_fix_found`, or
+`unsafe_to_proceed`.
+
 Do not introduce generalized workflow-step, action-intent, or completion-outbox frameworks unless a
 demonstrated crash boundary requires one. Prefer explicit transitions on the two records and
 reconcile ambiguous submission or completion before retrying. Verify concurrent claim, crash before

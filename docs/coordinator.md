@@ -51,3 +51,22 @@ npx --yes genkit-cli@1.43.0 trace:get <trace_id> --format json
 The trace must contain `use_skill`, `search_team_knowledge`, and `search_team_memory`. Result
 decisions and citations are application-observed evidence from successful callbacks; model-authored
 citations are not trusted.
+
+## Durable conversation wrapper
+
+S10 wraps the same provider-neutral `AgentRuntime` with application-owned conversation persistence.
+The wrapper claims one conversation turn, loads only its deterministic summary plus recent completed
+turns, passes that bounded `conversation_context` to the coordinator, and atomically persists the
+complete result with its citations, usage, content revision, and skill lock. The current objective
+remains the final user message. Summary and earlier messages are conversation data, never system
+instructions.
+
+MongoDB owns `conversations` and `conversation_turns`. Claim acquisition and completion use
+transactions; after an expired claim is reclaimed, its incremented generation rejects a late result
+from the abandoned worker. One v1 coordinator-worker process uses a local lock per conversation, so
+different conversations may run concurrently while the same conversation remains ordered. Genkit
+`SessionStore`, snapshot ancestry, branching, Slack thread mapping, and coding-job persistence are
+not part of this implementation.
+
+The JSON CLI remains the stateless diagnostic probe. Durable callers use the Python conversation
+wrapper; a user-facing Slack or interactive transport is introduced by a later slice.

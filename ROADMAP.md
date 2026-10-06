@@ -30,8 +30,8 @@ after the team approves that boundary.
   > After this: project/domain admission exposes the complete corpus, Git remains sole canonical authority, and team-wide supplemental memory has a provenance-rich lifecycle without approvers or per-record groups.
 - [x] **S09: Genkit coordinator tracer** `risk:high` `depends:[S06,S07,S08]`
   > After this: a narrow diagnostic/CI probe executes one stateless hosted Genkit turn through the configured OpenAI model adapter, selected immutable skills, and project-bound read-only context tools, returning evidence-derived citations and usage in provider-neutral JSON.
-- [ ] **S10: Durable Genkit conversations** `risk:high` `depends:[S09]`
-  > After this: ordered turns plus a bounded summary survive restart, same-conversation turns serialize, and every turn records the exact Git revision and skill lock it used while later turns may adopt newer canonical knowledge.
+- [x] **S10: Durable Genkit conversations** `risk:high` `depends:[S09]`
+  > After this: ordered turns plus a bounded summary survive restart, same-conversation turns serialize, and every completed turn records the exact Git revision and skill lock it used while later turns may adopt newer canonical knowledge.
 - [ ] **S11: Durable mock coding jobs** `risk:high` `depends:[S10]`
   > After this: minimal `runs` and `coding_jobs` records let a mock job be atomically claimed, observed, cancelled, timed out, recovered after restart, and completed once visibly against one pinned revision.
 - [ ] **S12: Mock diagnose-and-fix workflow** `risk:high` `depends:[S08,S09,S11]`

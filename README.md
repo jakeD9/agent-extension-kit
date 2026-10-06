@@ -9,11 +9,13 @@ The migration is intentionally incremental. S01–S08 delivered authenticated, r
 knowledge search, Git-backed skill distribution, local transports, and transactional memory. A
 corrective S08 pass replaced their per-artifact groups and memory approval workflow with one
 project/domain admission boundary and team-wide supplemental working memory. S09 added the
-stateless hosted Genkit coordinator tracer; durable conversations, coding runners, Slack, and
-automations arrive in later roadmap slices.
+stateless hosted Genkit coordinator tracer. S10 added application-owned MongoDB conversations with
+ordered turns, deterministic bounded context, restart recovery, and exact per-turn provenance.
+Coding runners, Slack, and automations arrive in later roadmap slices.
 
 The protected, pinned Git revision is the sole canonical knowledge and skill source. MongoDB holds a
-rebuildable search projection and non-canonical working memory. See
+rebuildable search projection, non-canonical working memory, and application-owned runtime
+conversation state. See
 [Domain Knowledge Authority](docs/domain-knowledge-authority.md) for this architecture's normative
 dogma and [Required CI Implementation](docs/required-ci-implementations.md) for the generic
 GitHub/GitLab-compatible publication contract.
@@ -94,8 +96,8 @@ set `TEAM_AGENT_CONTEXT_URL` and `TEAM_AGENT_TOKEN` in the host environment. See
 `docs/local-context.md` for tool behavior, pagination, errors, and verification.
 
 The hosted coordinator has a separate, narrow JSON diagnostic/CI probe. It does not replace the
-local Codex/Claude workflow above. See [Stateless Genkit coordinator](docs/coordinator.md) for its
-request contract, environment, evidence rules, and trace procedure.
+local Codex/Claude workflow above. See [Hosted Genkit coordinator](docs/coordinator.md) for the
+stateless probe, durable conversation wrapper, request contract, evidence rules, and trace procedure.
 
 ## Repository guide
 
@@ -105,7 +107,7 @@ request contract, environment, evidence rules, and trace procedure.
 - `docs/architecture.md` records trust boundaries and implementation status.
 - `docs/domain-knowledge-authority.md` defines the normative content-authority dogma.
 - `docs/required-ci-implementations.md` defines exact-SHA Git-to-Mongo publication requirements.
-- `docs/coordinator.md` documents the stateless hosted Genkit diagnostic/CI probe.
+- `docs/coordinator.md` documents the hosted Genkit probe and durable conversation wrapper.
 - `ROADMAP.md` is the dependency-ordered delivery ledger.
 - `.roadmap/workstreams/STATUS.md` tells a fresh session what to work on next.
 - `.agents/skills/developing-genkit-python/` contains the project-scoped Genkit development skill.

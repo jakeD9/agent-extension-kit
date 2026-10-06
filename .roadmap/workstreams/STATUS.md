@@ -1,9 +1,9 @@
 # Workstream Status
 
-- Current slice: S10 — durable Genkit conversations
-- State: S09 stateless Genkit coordinator implemented, independently reviewed, and verified; S10
+- Current slice: S11 — durable mock coding jobs
+- State: S10 durable Genkit conversations implemented, independently reviewed, and verified; S11
   requires its pre-slice technical check-in before implementation
-- Completed dependencies: S01, S02, S03, S04, S05, S06, S07, S08, S09
+- Completed dependencies: S01, S02, S03, S04, S05, S06, S07, S08, S09, S10
 - Verified capabilities: strict MongoDB context migrations, pinned revision synchronization,
   project/domain-admitted bounded candidate retrieval with atomic active-revision projection,
   restart-persistent cited REST search, Git/filesystem-backed skill discovery/loading without Mongo
@@ -15,19 +15,21 @@
   a healthy non-root `team-context` container, an authenticated local MongoDB replica set, complete
   admitted-domain knowledge/skills, team-wide supplemental working memory with Git precedence, and
   a stateless provider-neutral Genkit turn using a temporary locked skill projection plus observed
-  canonical and supplemental evidence
+  canonical and supplemental evidence, and application-owned MongoDB conversations with ordered
+  provenance-rich turns, deterministic bounded context, transactional claims/completion, restart
+  recovery, and no Genkit `SessionStore`
 - Known blockers: none
-- Next eligible slice: S10. Before work starts, agree on its ordered-turn and bounded-summary
-  contracts, optional `conversation_context`, Mongo CAS/lease mechanism, compaction limits, and
-  restart/concurrency proof. S09 remains a diagnostic/CI probe and does not replace local
-  Codex/Claude skills and MCP workflows.
+- Next eligible slice: S11. Before work starts, agree on its minimal run/job lifecycle and separate
+  domain outcomes, submission idempotency, claim/recovery mechanism, cancellation/deadline behavior,
+  and mock executor verification. Do not introduce generalized workflow or action frameworks without
+  a demonstrated crash boundary.
 - Delivery tracks: core v1 is S09–S16, S20, S23, and S24. S17–S19, S21, and S22 are optional
   expansion work and do not gate core hardening or adoption documentation.
 - Canonical brief: `.roadmap/team-agent-architecture-brief-genkit.md`
-- Skills distribution requirements: `.roadmap/skills-distribution-addendum.md`
+- Skill distribution: incorporated into the canonical brief; the former addendum is archived
 - Domain authority dogma: `docs/domain-knowledge-authority.md`
 - Required Git-to-Mongo CI contract: `docs/required-ci-implementations.md`
 - Genkit development skill: `.agents/skills/developing-genkit-python/SKILL.md`
 
-Read the S01 through S09 `SUMMARY.md` files before the S10 technical check-in, including every
+Read the S01 through S10 `SUMMARY.md` files before the S11 technical check-in, including every
 supersession notice and the replacement S08 verification evidence.

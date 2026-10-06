@@ -9,6 +9,8 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from team_agent_contracts import SKILL_NAME_PATTERN, Citation, SkillLock
 
+MAX_CONVERSATION_CONTEXT_CHARS = 48_000
+
 
 class _Contract(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -30,12 +32,40 @@ class DecisionKind(StrEnum):
     SOURCE_PRECEDENCE = "source_precedence"
 
 
+class ConversationTurnContext(_Contract):
+    """One completed prior exchange included in a bounded model context."""
+
+    sequence: int = Field(ge=1)
+    user: str = Field(min_length=1, max_length=20_000)
+    assistant: str = Field(min_length=1, max_length=20_000)
+
+
+class ConversationContext(_Contract):
+    """Application-owned summary and recent turns supplied to a stateless runtime."""
+
+    summary: str = Field(default="", max_length=12_000)
+    recent_turns: list[ConversationTurnContext] = Field(default_factory=list, max_length=6)
+
+    @model_validator(mode="after")
+    def ordered_unique_turns(self) -> ConversationContext:
+        sequences = [turn.sequence for turn in self.recent_turns]
+        if sequences != sorted(set(sequences)):
+            raise ValueError("recent_turns must have unique ascending sequence numbers")
+        total_chars = len(self.summary) + sum(
+            len(turn.user) + len(turn.assistant) for turn in self.recent_turns
+        )
+        if total_chars > MAX_CONVERSATION_CONTEXT_CHARS:
+            raise ValueError("conversation context exceeds the aggregate character limit")
+        return self
+
+
 class AgentTurnRequest(_Contract):
     schema_version: Literal["1"] = "1"
     run_id: str = Field(min_length=1, max_length=128)
     project: str = Field(min_length=1, max_length=200)
     objective: str = Field(min_length=1, max_length=20_000)
     skill_names: list[str] = Field(min_length=1, max_length=20)
+    conversation_context: ConversationContext | None = None
 
     @model_validator(mode="after")
     def unique_valid_skills(self) -> AgentTurnRequest:
@@ -110,6 +140,7 @@ class AgentRuntime(Protocol):
 
 
 __all__ = [
+    "MAX_CONVERSATION_CONTEXT_CHARS",
     "AgentDecision",
     "AgentFailure",
     "AgentRuntime",
@@ -117,6 +148,8 @@ __all__ = [
     "AgentTurnResult",
     "AgentTurnStatus",
     "AgentUsage",
+    "ConversationContext",
+    "ConversationTurnContext",
     "DecisionKind",
     "UsageSource",
 ]

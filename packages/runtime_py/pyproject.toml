@@ -2,7 +2,7 @@
 name = "team-agent-runtime"
 version = "0.2.0"
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.12.0,<3", "team-agent-contracts"]
+dependencies = ["pydantic>=2.12.0,<3", "pymongo>=4.13,<5", "team-agent-contracts"]
 
 [tool.uv.sources]
 team-agent-contracts = { workspace = true }

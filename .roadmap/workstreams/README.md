@@ -1,6 +1,9 @@
 # Workstream Session Protocol
 
-These artifacts let an engineer start any roadmap slice without prior chat history.
+These artifacts let an engineer start any roadmap slice without prior chat history. Document
+precedence is intentionally narrow: domain-authority dogma first, then the canonical Genkit brief,
+then the active slice brief. `docs/` describes as-built behavior. Summaries and `archive/` are
+historical evidence, never competing implementation contracts.
 
 1. Read the canonical Genkit architecture brief, the normative domain-authority dogma,
    `STATUS.md`, the selected slice's `BRIEF.md`, and every dependency's `SUMMARY.md`. Historical

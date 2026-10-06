@@ -5,8 +5,8 @@
 The kit lets one small, trusted team expose its domain context to local and hosted agents without
 making that context globally available or embedding authorization in prompts. Project/domain
 admission is the content boundary; every admitted developer can use and contribute the complete
-domain corpus. Genkit Python is the planned
-hosted orchestration runtime, initially through an explicit OpenAI model configuration; local Codex
+domain corpus. Genkit Python is the hosted orchestration runtime, initially through an explicit
+OpenAI model configuration; local Codex
 and Claude integrations remain independent of Genkit.
 
 Migration proceeds as verified vertical slices. The current implementation includes a Python context
@@ -16,8 +16,8 @@ local bootstrap can stage, verify, and activate fixture content; production star
 the already-published revision. Shared Python clients provide a
 JSON-first context CLI, a five-tool stdio MCP adapter, and verified generic/Codex/Claude skill
 distribution. S08 removed the previously delivered per-artifact groups and memory approval
-workflow. Genkit compatibility is pinned and verified; coordinator behavior,
-coding jobs, Slack, and automation are not yet implemented.
+workflow. Genkit compatibility, the stateless coordinator, and application-owned durable
+conversations are implemented; coding jobs, Slack, and automation are not yet implemented.
 
 ## Runtime boundaries
 
@@ -42,8 +42,10 @@ authorization, durable execution, validation, and external side effects.
 - The `team_context` MongoDB database owns rebuildable knowledge projections, source revision state,
   supplemental shared working memory, idempotency receipts, and immutable context audit. It does
   not own canonical knowledge or the skill catalog.
-- The `agent_runtime` MongoDB database will own conversations, Genkit snapshots/state, workflows, jobs,
-  approvals, automations, reviews, and projections.
+- The `agent_runtime` MongoDB database owns application-level conversations, ordered turns, bounded
+  summaries, and short-lived turn claims. Later slices add workflows, jobs, automations, reviews,
+  and projections there. Genkit consumes bounded conversation context but does not own or persist
+  the authoritative transcript.
 - The databases use distinct service credentials. Only the context service can access `team_context`.
 - Local agents and coding runners receive no MongoDB credentials.
 
@@ -95,8 +97,8 @@ Conflicting Git content wins and the conflict must be surfaced.
 
 Git-owned team skills remain provider neutral. The shared `SkillClient` resolves a selected domain subset
 to an immutable lock and `SkillInstaller` installs a bounded generic projection or fixed
-project-scoped Codex/Claude discovery layout. A later runtime will point Genkit Skills middleware at
-that projection, while coding runners reuse the same target-preserving lock and installer. The
+project-scoped Codex/Claude discovery layout. The hosted runtime points Genkit Skills middleware at
+that projection, while later coding runners reuse the same target-preserving lock and installer. The
 checked-in `developing-genkit-python` agent skill guides repository development only; it does not
 grant hosted runtime capabilities.
 
