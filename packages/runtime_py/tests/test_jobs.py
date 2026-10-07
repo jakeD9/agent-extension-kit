@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
@@ -144,6 +145,8 @@ def test_waiting_run_rejects_partial_completion_identity(
 def test_empty_planning_citations_preserve_the_s11_request_fingerprint() -> None:
     request = _request()
     legacy_payload = request.model_dump(mode="json")
+    legacy_payload["schema_version"] = "1"
+    del legacy_payload["execution_policy"]
     del legacy_payload["planning_citations"]
     legacy = (
         "sha256:"
@@ -173,6 +176,8 @@ def test_empty_planning_citations_preserve_the_s11_request_fingerprint() -> None
 def test_empty_reusable_lesson_preserves_the_s11_result_fingerprint() -> None:
     result = _result()
     legacy_payload = result.model_dump(mode="json")
+    legacy_payload["schema_version"] = "1"
+    del legacy_payload["artifacts"]
     del legacy_payload["reusable_lesson"]
     legacy = (
         "sha256:"
@@ -219,6 +224,60 @@ def test_concurrent_claim_has_one_winner_and_renewal_keeps_attempt() -> None:
         )
         assert renewed.attempt == 1
         assert renewed.lease_expires_at == now + timedelta(seconds=15)
+
+    asyncio.run(check())
+
+
+def test_same_stable_worker_recovers_live_attempt_without_incrementing_fence() -> None:
+    async def check() -> None:
+        repository = InMemoryCodingJobRepository()
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        await repository.submit(_request(), now)
+        claimed = await repository.claim("worker-a", now, now + timedelta(seconds=20))
+        assert claimed is not None
+
+        recovered = await repository.recover(
+            "worker-a", now + timedelta(seconds=5), now + timedelta(seconds=30)
+        )
+
+        assert recovered is not None
+        assert recovered.attempt == claimed.attempt == 1
+        assert recovered.lease_expires_at == now + timedelta(seconds=30)
+        assert (
+            await repository.recover(
+                "worker-b", now + timedelta(seconds=6), now + timedelta(seconds=30)
+            )
+            is None
+        )
+
+    asyncio.run(check())
+
+
+def test_harness_scoped_workers_skip_each_others_mixed_queue_jobs() -> None:
+    async def check() -> None:
+        repository = InMemoryCodingJobRepository()
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        mock_request = _request()
+        codex_request = _request("job-2", run_id="run-2", key="submit-2").model_copy(
+            update={"harness": "codex"}
+        )
+        await repository.submit(mock_request, now)
+        await repository.submit(codex_request, now + timedelta(seconds=1))
+
+        codex_claim = await repository.claim(
+            "codex-worker", now + timedelta(seconds=2), now + timedelta(seconds=20), harness="codex"
+        )
+        assert codex_claim is not None and codex_claim.job_id == "job-2"
+        untouched_mock = await repository.read("job-1")
+        assert untouched_mock is not None
+        assert untouched_mock.job.status == CodingJobStatus.QUEUED
+        assert untouched_mock.job.attempt == 0
+
+        mock_claim = await repository.claim(
+            "mock-worker", now + timedelta(seconds=2), now + timedelta(seconds=20), harness="mock"
+        )
+        assert mock_claim is not None and mock_claim.job_id == "job-1"
+        assert mock_claim.attempt == codex_claim.attempt == 1
 
     asyncio.run(check())
 
@@ -544,8 +603,10 @@ def test_mock_executor_renews_lease_while_harness_is_running() -> None:
 class _MigrationCollection:
     def __init__(self) -> None:
         self.indexes: list[tuple[list[tuple[str, int]], str, bool]] = []
+        self.dropped_indexes: list[str] = []
         self.upserts: list[tuple[dict[str, object], dict[str, object]]] = []
         self.updates: list[tuple[dict[str, object], dict[str, object]]] = []
+        self.finds: list[dict[str, object]] = []
 
     async def create_index(
         self, keys: list[tuple[str, int]], *, name: str, unique: bool = False
@@ -553,16 +614,30 @@ class _MigrationCollection:
         self.indexes.append((keys, name, unique))
         return name
 
+    async def index_information(self) -> dict[str, dict[str, object]]:
+        return {name: {"key": keys, "unique": unique} for keys, name, unique in self.indexes}
+
+    async def drop_index(self, name: str) -> None:
+        self.dropped_indexes.append(name)
+        self.indexes = [index for index in self.indexes if index[1] != name]
+
     async def update_one(
         self, query: dict[str, object], update: dict[str, object], *, upsert: bool = False
     ) -> object:
-        assert upsert
-        self.upserts.append((query, update))
+        if upsert:
+            self.upserts.append((query, update))
+        else:
+            self.updates.append((query, update))
         return object()
 
     async def update_many(self, query: dict[str, object], update: dict[str, object]) -> object:
         self.updates.append((query, update))
         return object()
+
+    async def find(self, query: dict[str, object]) -> AsyncIterator[dict[str, object]]:
+        self.finds.append(query)
+        if False:
+            yield {}
 
 
 class _MigrationDatabase:
@@ -594,6 +669,12 @@ class _MigrationDatabase:
         return self.collections[name]
 
 
+class _MalformedLegacyJobCollection(_MigrationCollection):
+    async def find(self, query: dict[str, object]) -> AsyncIterator[dict[str, object]]:
+        self.finds.append(query)
+        yield {"_id": "malformed", "schema_version": "2"}
+
+
 def test_mongo_migration_has_strict_snake_case_state_and_nonunique_run_lookup() -> None:
     from team_agent_runtime.mongo_jobs import MongoCodingJobRepository
 
@@ -621,11 +702,12 @@ def test_mongo_migration_has_strict_snake_case_state_and_nonunique_run_lookup() 
         assert ([("run_id", 1), ("created_at", 1)], "run_created", False) in indexes
         assert database["schema_migrations"].upserts[0][0] == {"_id": "runtime-jobs-schema-v1"}
         assert database["schema_migrations"].upserts[1][0] == {"_id": "runtime-jobs-schema-v2"}
+        assert database["schema_migrations"].upserts[2][0] == {"_id": "runtime-jobs-schema-v3"}
 
     asyncio.run(check())
 
 
-def test_mongo_v2_migration_relaxes_backfills_then_reinstalls_strict_validators() -> None:
+def test_mongo_v3_migration_relaxes_backfills_then_reinstalls_strict_validators() -> None:
     from team_agent_runtime.mongo_jobs import MongoCodingJobRepository
 
     async def check() -> None:
@@ -639,12 +721,103 @@ def test_mongo_v2_migration_relaxes_backfills_then_reinstalls_strict_validators(
         await repository.migrate(datetime(2026, 1, 1, tzinfo=UTC))
 
         run_update = database["runs"].updates[0]
-        job_update = database["coding_jobs"].updates[0]
         assert run_update[0] == {"schema_version": "1"}
         assert run_update[1]["$set"]["schema_version"] == "2"  # type: ignore[index]
-        assert job_update[1]["$set"]["consumed_at"] is None  # type: ignore[index]
+        assert database["coding_jobs"].finds == [{"schema_version": {"$in": ["1", "2"]}}]
         assert database.validators["runs"]["$jsonSchema"]["properties"]["schema_version"] == {
             "enum": ["2"]
         }
+        assert database.validators["coding_jobs"]["$jsonSchema"]["properties"][
+            "schema_version"
+        ] == {"enum": ["3"]}
 
     asyncio.run(check())
+
+
+def test_mongo_v3_migration_replaces_the_legacy_claim_index() -> None:
+    from team_agent_runtime.mongo_jobs import MongoCodingJobRepository
+
+    async def check() -> None:
+        database = _MigrationDatabase()
+        database.collections = {
+            "runs": _MigrationCollection(),
+            "coding_jobs": _MigrationCollection(),
+            "schema_migrations": _MigrationCollection(),
+        }
+        database["coding_jobs"].indexes.append(
+            (
+                [("status", 1), ("deadline_at", 1), ("created_at", 1)],
+                "claimable_deadline_created",
+                False,
+            )
+        )
+
+        await MongoCodingJobRepository(database).migrate(  # type: ignore[arg-type]
+            datetime(2026, 1, 1, tzinfo=UTC)
+        )
+
+        assert database["coding_jobs"].dropped_indexes == ["claimable_deadline_created"]
+        assert (
+            [
+                ("status", 1),
+                ("request.harness", 1),
+                ("deadline_at", 1),
+                ("created_at", 1),
+            ],
+            "claimable_deadline_created",
+            False,
+        ) in database["coding_jobs"].indexes
+
+    asyncio.run(check())
+
+
+def test_mongo_v3_migration_restores_strict_validator_after_malformed_legacy_job() -> None:
+    from team_agent_runtime.mongo_jobs import MongoCodingJobRepository
+
+    async def check() -> None:
+        database = _MigrationDatabase()
+        database.collections = {
+            "runs": _MigrationCollection(),
+            "coding_jobs": _MalformedLegacyJobCollection(),
+            "schema_migrations": _MigrationCollection(),
+        }
+
+        with pytest.raises(KeyError, match="request"):
+            await MongoCodingJobRepository(database).migrate(  # type: ignore[arg-type]
+                datetime(2026, 1, 1, tzinfo=UTC)
+            )
+
+        schema = database.validators["coding_jobs"]["$jsonSchema"]
+        assert schema["properties"]["schema_version"] == {"enum": ["3"]}
+
+    asyncio.run(check())
+
+
+def test_mongo_v3_job_upgrade_is_atomic_and_preserves_legacy_fingerprints() -> None:
+    from team_agent_runtime.mongo_jobs import _job_v3_updates
+
+    request = _request()
+    result = _result()
+    legacy_request = request.model_dump(mode="json")
+    legacy_request["schema_version"] = "1"
+    del legacy_request["execution_policy"]
+    legacy_result = result.model_dump(mode="json")
+    legacy_result["schema_version"] = "1"
+    del legacy_result["artifacts"]
+    document: dict[str, Any] = {
+        "schema_version": "2",
+        "request": legacy_request,
+        "request_fingerprint": coding_job_request_fingerprint(request),
+        "result": legacy_result,
+        "result_fingerprint": coding_job_result_fingerprint(result),
+        "consumed_at": None,
+        "consumed_by_turn_id": None,
+    }
+
+    updates = _job_v3_updates(document)
+
+    assert updates["schema_version"] == "3"
+    assert updates["request_fingerprint"] == document["request_fingerprint"]
+    assert updates["result_fingerprint"] == document["result_fingerprint"]
+    assert updates["request"]["schema_version"] == "2"  # type: ignore[index]
+    assert updates["result"]["schema_version"] == "2"  # type: ignore[index]

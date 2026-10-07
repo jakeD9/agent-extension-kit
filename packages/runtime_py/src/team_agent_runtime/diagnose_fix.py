@@ -16,6 +16,7 @@ from team_agent_runtime import (
     JobCompletionContext,
 )
 from team_agent_runtime.conversations import DurableConversationRuntime
+from team_agent_runtime.execution import ExecutionPolicy
 from team_agent_runtime.jobs import (
     CodingJobRecord,
     CodingJobRepository,
@@ -45,6 +46,8 @@ class DiagnoseAndFixRequest(_Contract):
     repository: str = Field(min_length=1, max_length=500)
     repository_revision: str = Field(min_length=1, max_length=256)
     objective: str = Field(min_length=1, max_length=20_000)
+    harness: Literal["mock", "codex"] = "mock"
+    execution_policy: ExecutionPolicy = Field(default_factory=ExecutionPolicy)
     deadline_at: AwareDatetime
 
 
@@ -146,6 +149,8 @@ class DiagnoseAndFixWorkflow:
                 repository=request.repository,
                 repository_revision=request.repository_revision,
                 objective=request.objective,
+                harness=request.harness,
+                execution_policy=request.execution_policy,
                 content_revision=planning.content_revision,
                 selected_skill_lock=planning.selected_skill_lock,
                 planning_citations=planning.canonical_knowledge_citations,

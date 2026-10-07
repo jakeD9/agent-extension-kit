@@ -120,6 +120,33 @@ def test_runtime_job_transactions_fencing_and_restart() -> None:
         assert duplicate.job.status == CodingJobStatus.COMPLETED
         assert duplicate.job.outcome == CodingJobOutcome.FIXED
         assert duplicate.run.status.value == "waiting_for_jobs"
+
+        # Exercise the deployed migration against a real Mongo collection, including
+        # both nested payloads and exact replay fingerprints. Validation is relaxed only
+        # long enough to model a document written by the pre-S13 runtime; migrate()
+        # reinstalls the strict v3 validator before it returns.
+        raw_completed = await restarted_database["coding_jobs"].find_one({"_id": request.job_id})
+        assert raw_completed is not None
+        old_request_fingerprint = raw_completed["request_fingerprint"]
+        old_result_fingerprint = raw_completed["result_fingerprint"]
+        raw_completed["schema_version"] = "2"
+        raw_completed["request"]["schema_version"] = "1"
+        raw_completed["request"].pop("execution_policy")
+        raw_completed["result"]["schema_version"] = "1"
+        raw_completed["result"].pop("artifacts")
+        raw_completed.pop("execution_progress")
+        raw_completed.pop("execution_artifacts")
+        await restarted_database.command({"collMod": "coding_jobs", "validationAction": "warn"})
+        await restarted_database["coding_jobs"].replace_one({"_id": request.job_id}, raw_completed)
+        await restarted_repository.migrate(now + timedelta(seconds=7))
+        migrated = await restarted_database["coding_jobs"].find_one({"_id": request.job_id})
+        assert migrated is not None
+        assert migrated["schema_version"] == "3"
+        assert migrated["request"]["schema_version"] == "2"
+        assert migrated["result"]["schema_version"] == "2"
+        assert migrated["request_fingerprint"] == old_request_fingerprint
+        assert migrated["result_fingerprint"] == old_result_fingerprint
+
         consumer = await restarted_repository.claim_terminal_run(
             now + timedelta(seconds=8), now + timedelta(seconds=38)
         )

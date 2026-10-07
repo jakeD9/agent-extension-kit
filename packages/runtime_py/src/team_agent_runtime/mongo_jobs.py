@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pymongo import ASCENDING, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
+from team_agent_runtime.execution import ExecutionArtifacts, ExecutionProgress
 from team_agent_runtime.jobs import (
     CodingJobClaim,
     CodingJobConflictError,
@@ -122,9 +123,11 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
             "completed_at",
             "consumed_at",
             "consumed_by_turn_id",
+            "execution_progress",
+            "execution_artifacts",
         ],
         {
-            "schema_version": {"enum": ["2"]},
+            "schema_version": {"enum": ["3"]},
             "run_id": {"bsonType": "string"},
             "project": {"bsonType": "string"},
             "submission_idempotency_key": {"bsonType": "string", "maxLength": 256},
@@ -155,13 +158,14 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
                     "objective",
                     "mode",
                     "harness",
+                    "execution_policy",
                     "content_revision",
                     "selected_skill_lock",
                     "deadline_at",
                 ],
                 "additionalProperties": False,
                 "properties": {
-                    "schema_version": {"enum": ["1"]},
+                    "schema_version": {"enum": ["2"]},
                     "job_id": {"bsonType": "string"},
                     "run_id": {"bsonType": "string"},
                     "conversation_id": {"bsonType": "string"},
@@ -172,7 +176,8 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
                     "repository_revision": {"bsonType": "string"},
                     "objective": {"bsonType": "string"},
                     "mode": {"enum": ["fix"]},
-                    "harness": {"enum": ["mock"]},
+                    "harness": {"enum": ["mock", "codex"]},
+                    "execution_policy": {"bsonType": "object"},
                     "content_revision": {"bsonType": "string"},
                     "selected_skill_lock": {"bsonType": "object"},
                     "planning_citations": {"bsonType": "array", "maxItems": 20},
@@ -195,6 +200,8 @@ JOB_COLLECTION_VALIDATORS: dict[str, Document] = {
             "completed_at": {"bsonType": ["date", "null"]},
             "consumed_at": {"bsonType": ["date", "null"]},
             "consumed_by_turn_id": {"bsonType": ["string", "null"]},
+            "execution_progress": {"bsonType": ["object", "null"]},
+            "execution_artifacts": {"bsonType": ["object", "null"]},
         },
     ),
     "schema_migrations": _object_schema(
@@ -342,6 +349,50 @@ JOB_COLLECTION_VALIDATORS["coding_jobs"]["$jsonSchema"]["allOf"] = [
 ]
 
 
+def _job_v3_updates(document: Document) -> Document:
+    """Build one atomic, replay-compatible update for an S11/S12 job document."""
+    request_document = dict(cast(Document, document["request"]))
+    request_document["schema_version"] = "2"
+    request_document.setdefault(
+        "execution_policy",
+        {
+            "schema_version": "1",
+            "network": "none",
+            "timeout_seconds": 900,
+            "memory_megabytes": 2_048,
+            "cpu_count": 2.0,
+            "pids_limit": 256,
+            "max_patch_bytes": 1_000_000,
+            "max_output_bytes": 2_000_000,
+            "editable_paths": [],
+            "checks": [],
+        },
+    )
+    request = CodingJobRequest.model_validate(request_document)
+    result_document = document.get("result")
+    result: CodingJobResult | None = None
+    if result_document is not None:
+        migrated_result = dict(cast(Document, result_document))
+        migrated_result["schema_version"] = "2"
+        migrated_result.setdefault("artifacts", None)
+        result = CodingJobResult.model_validate(migrated_result)
+    return {
+        "schema_version": "3",
+        "request": request.model_dump(mode="json"),
+        "request_fingerprint": coding_job_request_fingerprint(request),
+        "result": result.model_dump(mode="json") if result is not None else None,
+        "result_fingerprint": (
+            coding_job_result_fingerprint(result)
+            if result is not None
+            else document.get("result_fingerprint")
+        ),
+        "consumed_at": document.get("consumed_at"),
+        "consumed_by_turn_id": document.get("consumed_by_turn_id"),
+        "execution_progress": None,
+        "execution_artifacts": None,
+    }
+
+
 class MongoCodingJobRepository:
     """Transactional submissions and fenced one-document job transitions."""
 
@@ -369,42 +420,53 @@ class MongoCodingJobRepository:
                             "validationAction": "error",
                         }
                     )
-                    if name == "runs":
-                        await self._database[name].update_many(
-                            {"schema_version": "1"},
+                    try:
+                        if name == "runs":
+                            await self._database[name].update_many(
+                                {"schema_version": "1"},
+                                {
+                                    "$set": {
+                                        "schema_version": "2",
+                                        "claim_generation": 0,
+                                        "claim_expires_at": None,
+                                        "completion_job_id": None,
+                                        "completion_attempt": None,
+                                        "completion_fingerprint": None,
+                                        "resume_turn_id": None,
+                                        "memory_id": None,
+                                        "publication_outcome": None,
+                                    }
+                                },
+                            )
+                        else:
+                            async for migrated in self._database[name].find(
+                                {"schema_version": {"$in": ["1", "2"]}}
+                            ):
+                                await self._database[name].update_one(
+                                    {
+                                        "_id": migrated["_id"],
+                                        "schema_version": migrated["schema_version"],
+                                    },
+                                    {"$set": _job_v3_updates(migrated)},
+                                )
+                    finally:
+                        await self._database.command(
                             {
-                                "$set": {
-                                    "schema_version": "2",
-                                    "claim_generation": 0,
-                                    "claim_expires_at": None,
-                                    "completion_job_id": None,
-                                    "completion_attempt": None,
-                                    "completion_fingerprint": None,
-                                    "resume_turn_id": None,
-                                    "memory_id": None,
-                                    "publication_outcome": None,
-                                }
-                            },
+                                "collMod": name,
+                                "validator": validator,
+                                "validationLevel": "strict",
+                                "validationAction": "error",
+                            }
                         )
-                    else:
-                        await self._database[name].update_many(
-                            {"schema_version": "1"},
-                            {
-                                "$set": {
-                                    "schema_version": "2",
-                                    "consumed_at": None,
-                                    "consumed_by_turn_id": None,
-                                }
-                            },
-                        )
-                await self._database.command(
-                    {
-                        "collMod": name,
-                        "validator": validator,
-                        "validationLevel": "strict",
-                        "validationAction": "error",
-                    }
-                )
+                else:
+                    await self._database.command(
+                        {
+                            "collMod": name,
+                            "validator": validator,
+                            "validationLevel": "strict",
+                            "validationAction": "error",
+                        }
+                    )
         await self._database["coding_jobs"].create_index(
             [("project", ASCENDING), ("submission_idempotency_key", ASCENDING)],
             name="project_submission_unique",
@@ -418,9 +480,20 @@ class MongoCodingJobRepository:
             [("run_id", ASCENDING), ("created_at", ASCENDING)],
             name="run_created",
         )
+        claim_index = [
+            ("status", ASCENDING),
+            ("request.harness", ASCENDING),
+            ("deadline_at", ASCENDING),
+            ("created_at", ASCENDING),
+        ]
+        claim_index_name = "claimable_deadline_created"
+        existing_indexes = await self._database["coding_jobs"].index_information()
+        existing_claim_index = existing_indexes.get(claim_index_name)
+        if existing_claim_index is not None and list(existing_claim_index["key"]) != claim_index:
+            await self._database["coding_jobs"].drop_index(claim_index_name)
         await self._database["coding_jobs"].create_index(
-            [("status", ASCENDING), ("deadline_at", ASCENDING), ("created_at", ASCENDING)],
-            name="claimable_deadline_created",
+            claim_index,
+            name=claim_index_name,
         )
         await self._database["coding_jobs"].create_index(
             [("status", ASCENDING), ("lease_expires_at", ASCENDING)],
@@ -443,6 +516,11 @@ class MongoCodingJobRepository:
         await self._database["schema_migrations"].update_one(
             {"_id": "runtime-jobs-schema-v2"},
             {"$setOnInsert": {"schema_version": 2, "applied_at": applied_at}},
+            upsert=True,
+        )
+        await self._database["schema_migrations"].update_one(
+            {"_id": "runtime-jobs-schema-v3"},
+            {"$setOnInsert": {"schema_version": 3, "applied_at": applied_at}},
             upsert=True,
         )
 
@@ -508,16 +586,24 @@ class MongoCodingJobRepository:
         raise AssertionError("unreachable")
 
     async def claim(
-        self, worker_id: str, now: datetime, expires_at: datetime
+        self,
+        worker_id: str,
+        now: datetime,
+        expires_at: datetime,
+        *,
+        harness: Literal["mock", "codex"] | None = None,
     ) -> CodingJobClaim | None:
         _validate_lease_window(worker_id, now, expires_at)
         await self.reconcile(now)
+        query: Document = {
+            "status": CodingJobStatus.QUEUED.value,
+            "cancel_requested_at": None,
+            "deadline_at": {"$gt": now},
+        }
+        if harness is not None:
+            query["request.harness"] = harness
         job = await self._database["coding_jobs"].find_one_and_update(
-            {
-                "status": CodingJobStatus.QUEUED.value,
-                "cancel_requested_at": None,
-                "deadline_at": {"$gt": now},
-            },
+            query,
             {
                 "$set": {
                     "status": CodingJobStatus.RUNNING.value,
@@ -525,6 +611,8 @@ class MongoCodingJobRepository:
                     "lease_expires_at": expires_at,
                     "started_at": now,
                     "updated_at": now,
+                    "execution_progress": None,
+                    "execution_artifacts": None,
                 },
                 "$inc": {"attempt": 1},
             },
@@ -557,6 +645,43 @@ class MongoCodingJobRepository:
         if job is None:
             await self.reconcile(now)
             raise StaleCodingJobClaimError("coding job claim is stale or expired")
+        return _claim_from(job)
+
+    async def recover(
+        self,
+        worker_id: str,
+        now: datetime,
+        expires_at: datetime,
+        *,
+        harness: Literal["mock", "codex"] | None = None,
+    ) -> CodingJobClaim | None:
+        _validate_lease_window(worker_id, now, expires_at)
+        query: Document = {
+            "status": CodingJobStatus.RUNNING.value,
+            "worker_id": worker_id,
+            "cancel_requested_at": None,
+            "lease_expires_at": {"$gt": now},
+            "deadline_at": {"$gt": now},
+        }
+        if harness is not None:
+            query["request.harness"] = harness
+        job = await self._database["coding_jobs"].find_one_and_update(
+            query,
+            {"$set": {"lease_expires_at": expires_at, "updated_at": now}},
+            sort=[("updated_at", ASCENDING), ("_id", ASCENDING)],
+            return_document=ReturnDocument.AFTER,
+        )
+        if job is None:
+            return None
+        deadline = cast(datetime, job["deadline_at"])
+        if cast(datetime, job["lease_expires_at"]) > deadline:
+            shortened = await self._database["coding_jobs"].find_one_and_update(
+                {"_id": job["_id"], "status": "running", "attempt": job["attempt"]},
+                {"$set": {"lease_expires_at": deadline}},
+                return_document=ReturnDocument.AFTER,
+            )
+            if shortened is not None:
+                job = shortened
         return _claim_from(job)
 
     async def complete(
@@ -610,6 +735,32 @@ class MongoCodingJobRepository:
             raise StaleCodingJobClaimError("coding job claim is stale or expired")
         return await self._snapshot_for(job)
 
+    async def record_execution(
+        self,
+        claim: CodingJobClaim,
+        progress: ExecutionProgress,
+        now: datetime,
+        *,
+        artifacts: ExecutionArtifacts | None = None,
+    ) -> CodingJobClaim:
+        _validate_timestamp("now", now)
+        updates: Document = {
+            "execution_progress": progress.model_dump(mode="json"),
+            "updated_at": now,
+        }
+        if artifacts is not None:
+            updates["execution_artifacts"] = artifacts.model_dump(mode="json")
+        _assert_document_size(updates)
+        job = await self._database["coding_jobs"].find_one_and_update(
+            self._active_claim_query(claim, now),
+            {"$set": updates},
+            return_document=ReturnDocument.AFTER,
+        )
+        if job is None:
+            await self.reconcile(now)
+            raise StaleCodingJobClaimError("coding job claim is stale or expired")
+        return _claim_from(job)
+
     async def fail(
         self, claim: CodingJobClaim, failure: CodingJobFailure, now: datetime
     ) -> CodingRunSnapshot:
@@ -620,6 +771,10 @@ class MongoCodingJobRepository:
             CodingJobStatus.FAILED,
             {"failure": failure.model_dump(mode="json")},
         )
+
+    async def timeout(self, claim: CodingJobClaim, now: datetime) -> CodingRunSnapshot:
+        _validate_timestamp("now", now)
+        return await self._terminal_claim_update(claim, now, CodingJobStatus.TIMED_OUT, {})
 
     async def request_input(
         self, claim: CodingJobClaim, request: CodingJobInputRequest, now: datetime

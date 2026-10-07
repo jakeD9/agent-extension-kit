@@ -1,9 +1,9 @@
 # Workstream Status
 
-- Current slice: S13 — supervised Codex execution
-- State: S12 mock diagnose-and-fix workflow implemented and deterministically verified; S13 requires
-  its pre-slice technical check-in before implementation
-- Completed dependencies: S01, S02, S03, S04, S05, S06, S07, S08, S09, S10, S11, S12
+- Current slice: S14 — grounded Slack question answering
+- State: S13 supervised Codex execution implemented and deterministically verified; S14 requires its
+  pre-slice technical check-in before implementation
+- Completed dependencies: S01, S02, S03, S04, S05, S06, S07, S08, S09, S10, S11, S12, S13
 - Verified capabilities: strict MongoDB context migrations, pinned revision synchronization,
   project/domain-admitted bounded candidate retrieval with atomic active-revision projection,
   restart-persistent cited REST search, Git/filesystem-backed skill discovery/loading without Mongo
@@ -24,13 +24,15 @@
   diagnose-and-fix workflow with cited pinned submission, bounded
   terminal polling, short fenced run claims, deterministic completion/resume identities,
   effectively-once visible conversation projection, idempotent supplemental lessons, deterministic
-  mock publication outcomes, and transactional consumption under an explicit jobs schema v2
+  mock publication outcomes, and transactional consumption under an explicit jobs schema v2, plus
+  exact-revision local Git bundles, frozen Codex skill projection, a pinned disposable non-root
+  Codex runner, supervisor-derived bounded patches, independent credential-free verification,
+  attempt-fenced restart reconciliation, and durable artifact projection under jobs schema v3
 - Known blockers: none
 - Parallel investigation: `.roadmap/spikes/temporal-durable-execution/SPIKE.md` compares the current
   MongoDB-owned workflow with Temporal. It does not block S13 or authorize a production migration.
-- Next eligible slice: S13. Before work starts, agree on how the persistent executor creates,
-  observes, validates, and reconciles a disposable Codex environment while keeping Mongo and
-  publication credentials outside the runner.
+- Next eligible slice: S14. Before work starts, agree on how Slack identity/thread mapping invokes
+  the cited conversation runtime without allowing channel input to alter trusted project scope.
 - Delivery tracks: core v1 is S09–S16, S20, S23, S24, and the final structural cleanup S25.
   S17–S19, S21, and S22 are optional expansion work and do not gate core hardening or adoption
   documentation.

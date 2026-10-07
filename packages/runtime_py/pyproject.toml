@@ -2,10 +2,19 @@
 name = "team-agent-runtime"
 version = "0.2.0"
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.12.0,<3", "pymongo>=4.13,<5", "team-agent-contracts"]
+dependencies = [
+  "pydantic>=2.12.0,<3",
+  "pymongo>=4.13,<5",
+  "team-agent-contracts",
+  "team-agent-skills",
+]
 
 [tool.uv.sources]
 team-agent-contracts = { workspace = true }
+team-agent-skills = { workspace = true }
+
+[project.scripts]
+team-agent-coding-executor = "team_agent_runtime.executor_worker:main"
 
 [build-system]
 requires = ["uv_build>=0.11.0,<0.12"]

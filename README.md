@@ -11,7 +11,8 @@ corrective S08 pass replaced their per-artifact groups and memory approval workf
 project/domain admission boundary and team-wide supplemental working memory. S09 added the
 stateless hosted Genkit coordinator tracer. S10 added application-owned MongoDB conversations with
 ordered turns, deterministic bounded context, restart recovery, and exact per-turn provenance.
-Coding runners, Slack, and automations arrive in later roadmap slices.
+S11–S13 add durable coding jobs, the diagnose-and-fix workflow, and a supervised disposable Codex
+runner. Slack and automations arrive in later roadmap slices.
 
 The protected, pinned Git revision is the sole canonical knowledge and skill source. MongoDB holds a
 rebuildable search projection, non-canonical working memory, and application-owned runtime
@@ -108,6 +109,7 @@ stateless probe, durable conversation wrapper, request contract, evidence rules,
 - `docs/domain-knowledge-authority.md` defines the normative content-authority dogma.
 - `docs/required-ci-implementations.md` defines exact-SHA Git-to-Mongo publication requirements.
 - `docs/coordinator.md` documents the hosted Genkit probe and durable conversation wrapper.
+- `docs/coding-runner.md` documents pinned Codex execution, isolation, verification, and recovery.
 - `ROADMAP.md` is the dependency-ordered delivery ledger.
 - `.roadmap/workstreams/STATUS.md` tells a fresh session what to work on next.
 - `.agents/skills/developing-genkit-python/` contains the project-scoped Genkit development skill.

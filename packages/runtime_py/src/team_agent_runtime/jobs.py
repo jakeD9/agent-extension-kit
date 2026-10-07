@@ -16,6 +16,8 @@ from typing import Any, Literal, Protocol
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from team_agent_contracts import Citation, SkillLock
 
+from team_agent_runtime.execution import ExecutionArtifacts, ExecutionPolicy, ExecutionProgress
+
 Document = dict[str, Any]
 DEFAULT_JOB_LEASE_TTL = timedelta(seconds=60)
 MAX_JOB_DOCUMENT_BYTES = 8 * 1024 * 1024
@@ -55,7 +57,7 @@ class CodingJobOutcome(StrEnum):
 class CodingJobRequest(_Contract):
     """Immutable input pinned before a disposable coding environment starts."""
 
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     job_id: str = Field(min_length=1, max_length=160)
     run_id: str = Field(min_length=1, max_length=128)
     conversation_id: str = Field(min_length=1, max_length=128)
@@ -66,7 +68,8 @@ class CodingJobRequest(_Contract):
     repository_revision: str = Field(min_length=1, max_length=256)
     objective: str = Field(min_length=1, max_length=20_000)
     mode: Literal["fix"] = "fix"
-    harness: Literal["mock"] = "mock"
+    harness: Literal["mock", "codex"] = "mock"
+    execution_policy: ExecutionPolicy = Field(default_factory=ExecutionPolicy)
     content_revision: str = Field(min_length=1, max_length=256)
     selected_skill_lock: SkillLock
     planning_citations: list[Citation] = Field(default_factory=list, max_length=20)
@@ -89,13 +92,14 @@ class ReusableLesson(_Contract):
 
 
 class CodingJobResult(_Contract):
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     job_id: str = Field(min_length=1, max_length=160)
     outcome: CodingJobOutcome
     summary: str = Field(min_length=1, max_length=20_000)
     changed_paths: list[str] = Field(default_factory=list, max_length=2_000)
     checks: list[str] = Field(default_factory=list, max_length=2_000)
     reusable_lesson: ReusableLesson | None = None
+    artifacts: ExecutionArtifacts | None = None
 
     @model_validator(mode="after")
     def unique_bounded_paths_and_checks(self) -> CodingJobResult:
@@ -182,7 +186,7 @@ class RunRecord(_Contract):
 
 
 class CodingJobRecord(_Contract):
-    schema_version: Literal["2"] = "2"
+    schema_version: Literal["3"] = "3"
     job_id: str
     run_id: str
     project: str
@@ -206,6 +210,8 @@ class CodingJobRecord(_Contract):
     completed_at: AwareDatetime | None = None
     consumed_at: AwareDatetime | None = None
     consumed_by_turn_id: str | None = None
+    execution_progress: ExecutionProgress | None = None
+    execution_artifacts: ExecutionArtifacts | None = None
 
     @model_validator(mode="after")
     def state_is_consistent(self) -> CodingJobRecord:
@@ -290,11 +296,34 @@ class CodingJobRepository(Protocol):
     async def submit(self, request: CodingJobRequest, now: datetime) -> CodingRunSnapshot: ...
 
     async def claim(
-        self, worker_id: str, now: datetime, expires_at: datetime
+        self,
+        worker_id: str,
+        now: datetime,
+        expires_at: datetime,
+        *,
+        harness: Literal["mock", "codex"] | None = None,
+    ) -> CodingJobClaim | None: ...
+
+    async def recover(
+        self,
+        worker_id: str,
+        now: datetime,
+        expires_at: datetime,
+        *,
+        harness: Literal["mock", "codex"] | None = None,
     ) -> CodingJobClaim | None: ...
 
     async def renew(
         self, claim: CodingJobClaim, now: datetime, expires_at: datetime
+    ) -> CodingJobClaim: ...
+
+    async def record_execution(
+        self,
+        claim: CodingJobClaim,
+        progress: ExecutionProgress,
+        now: datetime,
+        *,
+        artifacts: ExecutionArtifacts | None = None,
     ) -> CodingJobClaim: ...
 
     async def complete(
@@ -304,6 +333,8 @@ class CodingJobRepository(Protocol):
     async def fail(
         self, claim: CodingJobClaim, failure: CodingJobFailure, now: datetime
     ) -> CodingRunSnapshot: ...
+
+    async def timeout(self, claim: CodingJobClaim, now: datetime) -> CodingRunSnapshot: ...
 
     async def request_input(
         self, claim: CodingJobClaim, request: CodingJobInputRequest, now: datetime
@@ -338,6 +369,10 @@ class CodingHarness(Protocol):
 
 def coding_job_request_fingerprint(request: CodingJobRequest) -> str:
     payload = request.model_dump(mode="json")
+    # Migrated mock requests retain their exact S11/S12 idempotency identity.
+    if request.harness == "mock" and request.execution_policy == ExecutionPolicy():
+        payload["schema_version"] = "1"
+        del payload["execution_policy"]
     # Preserve S11/v1 fingerprint identity for requests created before this optional field existed.
     if not payload["planning_citations"]:
         del payload["planning_citations"]
@@ -346,12 +381,21 @@ def coding_job_request_fingerprint(request: CodingJobRequest) -> str:
 
 
 def coding_job_result_fingerprint(result: CodingJobResult) -> str:
+    payload = _result_fingerprint_payload(result)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+def _result_fingerprint_payload(result: CodingJobResult) -> Document:
     payload = result.model_dump(mode="json")
+    # Migrated results without durable artifacts retain their exact S11/S12 identity.
+    if result.artifacts is None:
+        payload["schema_version"] = "1"
+        del payload["artifacts"]
     # Preserve S11/v1 completion replay for results created before lessons existed.
     if payload["reusable_lesson"] is None:
         del payload["reusable_lesson"]
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return f"sha256:{sha256(encoded).hexdigest()}"
+    return payload
 
 
 def coding_job_completion_fingerprint(job: CodingJobRecord) -> str:
@@ -362,7 +406,7 @@ def coding_job_completion_fingerprint(job: CodingJobRecord) -> str:
         "attempt": job.attempt,
         "status": job.status.value,
         "outcome": job.outcome.value if job.outcome is not None else None,
-        "result": job.result.model_dump(mode="json") if job.result is not None else None,
+        "result": _result_fingerprint_payload(job.result) if job.result is not None else None,
         "failure": job.failure.model_dump(mode="json") if job.failure is not None else None,
         "input_request": (
             job.input_request.model_dump(mode="json") if job.input_request is not None else None
@@ -443,7 +487,7 @@ def _run_document(request: CodingJobRequest, fingerprint: str, now: datetime) ->
 def _job_document(request: CodingJobRequest, fingerprint: str, now: datetime) -> Document:
     return {
         "_id": request.job_id,
-        "schema_version": "2",
+        "schema_version": "3",
         "run_id": request.run_id,
         "project": request.project,
         "submission_idempotency_key": request.submission_idempotency_key,
@@ -466,6 +510,8 @@ def _job_document(request: CodingJobRequest, fingerprint: str, now: datetime) ->
         "completed_at": None,
         "consumed_at": None,
         "consumed_by_turn_id": None,
+        "execution_progress": None,
+        "execution_artifacts": None,
     }
 
 
@@ -525,7 +571,12 @@ class InMemoryCodingJobRepository:
             return _snapshot(self._runs[request.run_id], job_document)
 
     async def claim(
-        self, worker_id: str, now: datetime, expires_at: datetime
+        self,
+        worker_id: str,
+        now: datetime,
+        expires_at: datetime,
+        *,
+        harness: Literal["mock", "codex"] | None = None,
     ) -> CodingJobClaim | None:
         _validate_lease_window(worker_id, now, expires_at)
         await self.reconcile(now)
@@ -537,6 +588,7 @@ class InMemoryCodingJobRepository:
                     if job["status"] == CodingJobStatus.QUEUED.value
                     and job["cancel_requested_at"] is None
                     and job["deadline_at"] > now
+                    and (harness is None or job["request"]["harness"] == harness)
                 ),
                 key=lambda job: (job["created_at"], job["_id"]),
             )
@@ -555,8 +607,40 @@ class InMemoryCodingJobRepository:
                     # This is the current fenced attempt's start, not first-ever start.
                     "started_at": now,
                     "updated_at": now,
+                    "execution_progress": None,
+                    "execution_artifacts": None,
                 }
             )
+            return _claim_from(job)
+
+    async def recover(
+        self,
+        worker_id: str,
+        now: datetime,
+        expires_at: datetime,
+        *,
+        harness: Literal["mock", "codex"] | None = None,
+    ) -> CodingJobClaim | None:
+        _validate_lease_window(worker_id, now, expires_at)
+        async with self._mutex:
+            candidates = sorted(
+                (
+                    job
+                    for job in self._jobs.values()
+                    if job["status"] == CodingJobStatus.RUNNING.value
+                    and job["worker_id"] == worker_id
+                    and job["cancel_requested_at"] is None
+                    and job["lease_expires_at"] > now
+                    and job["deadline_at"] > now
+                    and (harness is None or job["request"]["harness"] == harness)
+                ),
+                key=lambda job: (job["updated_at"], job["_id"]),
+            )
+            if not candidates:
+                return None
+            job = candidates[0]
+            job["lease_expires_at"] = min(expires_at, job["deadline_at"])
+            job["updated_at"] = now
             return _claim_from(job)
 
     async def renew(
@@ -606,6 +690,24 @@ class InMemoryCodingJobRepository:
             job["result_fingerprint"] = fingerprint
             return _snapshot(self._runs[claim.run_id], job)
 
+    async def record_execution(
+        self,
+        claim: CodingJobClaim,
+        progress: ExecutionProgress,
+        now: datetime,
+        *,
+        artifacts: ExecutionArtifacts | None = None,
+    ) -> CodingJobClaim:
+        _validate_timestamp("now", now)
+        async with self._mutex:
+            job = self._require_active_claim(claim, now)
+            job["execution_progress"] = progress.model_dump(mode="json")
+            if artifacts is not None:
+                job["execution_artifacts"] = artifacts.model_dump(mode="json")
+            job["updated_at"] = now
+            _assert_document_size(job)
+            return _claim_from(job)
+
     async def fail(
         self, claim: CodingJobClaim, failure: CodingJobFailure, now: datetime
     ) -> CodingRunSnapshot:
@@ -619,6 +721,13 @@ class InMemoryCodingJobRepository:
             _assert_document_size(prospective)
             self._finish(job, CodingJobStatus.FAILED, now)
             job["failure"] = failure_document
+            return _snapshot(self._runs[claim.run_id], job)
+
+    async def timeout(self, claim: CodingJobClaim, now: datetime) -> CodingRunSnapshot:
+        _validate_timestamp("now", now)
+        async with self._mutex:
+            job = self._require_active_claim(claim, now)
+            self._finish(job, CodingJobStatus.TIMED_OUT, now)
             return _snapshot(self._runs[claim.run_id], job)
 
     async def request_input(
@@ -853,7 +962,9 @@ class MockCodingExecutor:
 
     async def execute_one(self) -> CodingRunSnapshot | None:
         now = self._clock()
-        claim = await self._repository.claim(self._worker_id, now, now + self._lease_ttl)
+        claim = await self._repository.claim(
+            self._worker_id, now, now + self._lease_ttl, harness="mock"
+        )
         if claim is None:
             return None
         harness_task = asyncio.create_task(self._harness.execute(claim.request))

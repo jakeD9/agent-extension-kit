@@ -17,12 +17,18 @@ gate is deterministic and credential-free. It does not claim that a live OpenAI 
 | Pydantic | 2.13.5 | tool inputs and structured outputs |
 | OpenAI Python | 3.24.0 | custom Responses adapter |
 | Genkit CLI | 1.43.0 | pinned trace command surface |
+| Codex CLI | 0.154.0-alpha.6.2 | pinned noninteractive coding-runner command surface |
 
 Direct Python dependencies are exact pins in `team-agent-runtime-genkit` and `uv.lock`. The CLI is
 pinned in root compatibility metadata and invoked as `npx --yes genkit-cli@1.43.0`; it is developer
 tooling rather than an application dependency. An initial Genkit 0.11.0 / middleware 0.12.0 mix
 failed at import because middleware used the newer artifact API. The all-0.12.0 matrix fixes that
 release skew.
+
+The Codex CLI is a separate external coding harness, not the Genkit coordinator model adapter. The
+`coding-runner` image pins it independently and uses only flags verified from that release's local
+`codex exec --help`: `--ephemeral`, `--ignore-user-config`, `--strict-config`, `--sandbox
+workspace-write`, `--approve-for-me`, `--json`, `--output-schema`, and `--output-last-message`.
 
 ## Selected paths
 
