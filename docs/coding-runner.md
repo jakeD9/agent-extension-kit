@@ -4,6 +4,111 @@ S13 replaces the production mock execution boundary with a disposable Codex cont
 change the S12 workflow state machine: MongoDB remains authoritative for job/run lifecycle, and the
 runner never receives MongoDB, context-service, or publication credentials.
 
+## Component architecture
+
+```mermaid
+flowchart TB
+    Workflow["Diagnose-and-fix workflow"]
+    Jobs[("Coding jobs in agent_runtime")]
+
+    subgraph TrustedHost["Trusted executor host"]
+        Worker["Persistent executor worker"]
+        Catalog["Repository allowlist"]
+        SkillStager["Frozen skill stager"]
+        Docker["Docker CLI adapter"]
+        ArtifactStore["Durable artifact store"]
+    end
+
+    LocalGit["Local or bare Git source"]
+    Context["Authenticated context service"]
+
+    subgraph RunnerBoundary["Disposable runner container"]
+        Input["Read-only request, Git bundle, skills"]
+        Codex["Pinned codex exec"]
+        Workspace["Ephemeral workspace"]
+        RunnerOutput["Transient runner output"]
+        Input --> Workspace
+        Codex --> Workspace
+        Workspace --> RunnerOutput
+    end
+
+    subgraph VerifierBoundary["Disposable verifier container"]
+        CleanCheckout["Fresh exact checkout"]
+        Patch["Runner patch mounted read-only"]
+        Checks["Configured argv checks"]
+        Report["Changed paths and verification report"]
+        CleanCheckout --> Patch --> Checks --> Report
+    end
+
+    Workflow -->|"submit pinned codex job"| Jobs
+    Jobs <-->|"claim, renew, fence, complete"| Worker
+    Worker --> Catalog --> LocalGit
+    Worker --> SkillStager --> Context
+    Worker --> Docker
+    Docker --> RunnerBoundary
+    Docker --> VerifierBoundary
+    RunnerOutput -->|"read-only"| Patch
+    RunnerOutput --> Worker
+    Report --> Worker
+    Worker --> ArtifactStore
+    Worker -->|"terminal result and artifact references"| Jobs
+```
+
+The worker is the trust boundary. It admits repository identifiers, verifies the exact commit and
+skill lock, controls Docker, enforces resource and path policy, and is the only writer to durable
+artifacts and job state. The Codex container may modify only its ephemeral workspace and transient
+output. The verifier receives no model, MongoDB, context, publication, or Docker credentials.
+
+| Component | Authority and credentials | Explicitly absent |
+|---|---|---|
+| Trusted executor | Runtime MongoDB credential, context-service token, Docker daemon authority, admitted local Git paths, durable artifact path, and optional scoped Codex home/network configuration | Git publication credential |
+| Codex runner | Read-only job inputs and skill projection; opt-in live mode receives a read-only scoped Codex home and administrator-configured model network | MongoDB credential, context token, publication credential, Docker socket, host checkout |
+| Verifier | Read-only job inputs and runner patch, isolated workspace, trusted check argv, transient report output | All service/model/publication credentials, network, Docker socket, host checkout |
+
+The executor currently runs as a host-managed Python process, not as a Compose service. This keeps
+Docker-daemon authority out of the application and context-service containers.
+
+## One job attempt
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Flow as Diagnose-and-fix workflow
+    participant Jobs as agent_runtime MongoDB
+    participant Worker as Trusted executor
+    participant Context as Context service
+    participant Git as Allowlisted Git source
+    participant Runner as Codex runner
+    participant Verifier as Clean verifier
+    participant Store as Artifact store
+
+    Flow->>Jobs: Submit immutable request and skill lock
+    Worker->>Jobs: Recover same-worker attempt or claim queued codex job
+    Worker->>Git: Verify full commit and stage atomic bundle
+    Worker->>Context: Frozen pull of exact skill packages
+    Worker->>Runner: Start named, labeled, resource-bounded container
+    Runner->>Runner: Checkout exact commit and run pinned codex exec
+    Runner-->>Worker: JSONL, structured result, and binary patch
+    Worker->>Verifier: Apply patch to a fresh exact checkout
+    Verifier->>Verifier: Capture changed paths, then run configured checks
+    Verifier-->>Worker: Strict verification report
+    Worker->>Verifier: Remove managed verifier container
+    Worker->>Store: Validate, copy, and hash bounded artifacts
+    Worker->>Jobs: Fenced terminal completion with artifact references
+    Worker->>Runner: Remove managed runner container
+    Flow->>Jobs: Consume terminal result and resume conversation
+
+    alt worker process crashes
+        Worker->>Jobs: Recover live lease using stable worker identity
+        Worker->>Runner: Reattach matching runner
+        Worker->>Verifier: Remove and rerun matching verifier
+    else lease is superseded, cancelled, or timed out
+        Jobs-->>Worker: Reject stale attempt mutation
+        Worker->>Runner: Stop managed runner and trust MongoDB state
+        Worker->>Verifier: Stop managed verifier
+    end
+```
+
 ## Execution boundary
 
 `LocalDockerExecutor` claims one `harness=codex` job and renews its fenced attempt while
@@ -16,10 +121,12 @@ runner never receives MongoDB, context-service, or publication credentials.
    Missing or corrupt exact packages fail startup; there is no resolution to a newer revision.
 4. Reconcile or create a deterministic, labelled container for `(job_id, attempt,
    request_fingerprint)` and invoke pinned `codex exec` with ephemeral state, ignored user config,
-   strict config, the workspace-write sandbox, automatic review, JSONL events, and a strict final
-   output schema.
-5. Compute the patch and changed paths from Git rather than trusting model prose. Patch bytes,
-   output bytes, path count, optional editable path prefixes, time, memory, CPU, and PIDs are bounded.
+   strict config, the workspace-write sandbox, automatic command approval within that sandbox,
+   JSONL events, and a strict final output schema. Repository instructions and the staged project
+   skills remain available inside the exact checkout.
+5. Have the runner compute the binary Git patch and an initial path claim. The verifier independently
+   recomputes actual changed paths from the applied patch. The supervisor enforces patch bytes,
+   output bytes, path count, optional editable path prefixes, time, memory, CPU, and PID bounds.
 6. Run configured argv checks in a fresh credential-free verifier container with networking off.
    The verifier applies the patch with Git, captures the actual changed paths before checks may alter
    the worktree, and writes its report to a separate output mount. It never trusts the runner's path
@@ -30,9 +137,11 @@ runner never receives MongoDB, context-service, or publication credentials.
    conversation normally.
 
 The supervisor uses argv-only subprocess calls and a narrow Docker CLI adapter. It does not parse a
-command policy language. Check commands and editable path prefixes are trusted job configuration;
-an empty editable-prefix list means the whole checked-out repository is editable. The independent
-verifier still decides whether a claimed fix is safe to report as fixed.
+command policy language. Check commands and editable path prefixes are trusted workflow or
+administrator configuration and must never be copied directly from untrusted user input. An empty
+editable-prefix list means the whole checked-out repository is editable. The verifier decides patch
+applicability and check success and derives the actual changed paths; the trusted supervisor applies
+path policy and maps verification or policy failures to `unsafe_to_proceed`.
 
 ## Isolation and credentials
 
